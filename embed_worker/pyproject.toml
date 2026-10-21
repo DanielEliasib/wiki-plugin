@@ -2,7 +2,13 @@
 name = "wiki-embed-worker"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = [
+dependencies = []
+
+[project.optional-dependencies]
+# Default: runs anywhere.
+cpu = ["fastembed>=0.3"]
+# NVIDIA GPU (CUDA 12). Several GB of wheels; opt in with embed_device: gpu.
+gpu = [
     "fastembed-gpu>=0.3",
     "nvidia-cublas-cu12>=12.9.2.10",
     "nvidia-cudnn-cu12>=9.25.1.1",
@@ -19,3 +25,5 @@ dependencies = [
 
 [tool.uv]
 package = false
+# fastembed and fastembed-gpu install the same module; never both.
+conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]

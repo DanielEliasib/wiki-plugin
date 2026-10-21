@@ -17,6 +17,8 @@ type Config struct {
 	Vault string `yaml:"vault"`
 	// EmbedWorkerDir is the directory containing embed_worker.py.
 	EmbedWorkerDir string `yaml:"embed_worker_dir"`
+	// EmbedDevice is "cpu" (default) or "gpu" (NVIDIA CUDA 12).
+	EmbedDevice string `yaml:"embed_device"`
 }
 
 // Path returns the config file location: $WIKI_CONFIG, else

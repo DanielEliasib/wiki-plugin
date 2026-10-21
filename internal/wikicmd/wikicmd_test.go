@@ -625,3 +625,34 @@ func TestMapNudgeIsFactualNotAnOrder(t *testing.T) {
 		t.Errorf("nudge should state facts, not give an order:\n%s", out)
 	}
 }
+
+func TestInitCreatesVaultAndIsIdempotent(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "vault")
+	report, err := Init(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"projects", "areas", "resources", "archive", "drafts", ".wiki"} {
+		if info, err := os.Stat(filepath.Join(root, dir)); err != nil || !info.IsDir() {
+			t.Errorf("%s not created", dir)
+		}
+	}
+	if len(report.Created) != 7 {
+		t.Errorf("created %v, want 6 folders + conventions", report.Created)
+	}
+
+	conventions := filepath.Join(root, ".wiki", "conventions.md")
+	if err := os.WriteFile(conventions, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Init(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Created) != 0 {
+		t.Errorf("second run created %v, want nothing", again.Created)
+	}
+	if got, _ := os.ReadFile(conventions); string(got) != "mine" {
+		t.Errorf("conventions overwritten: %q", got)
+	}
+}
