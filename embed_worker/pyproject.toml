@@ -1,0 +1,21 @@
+[project]
+name = "wiki-embed-worker"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastembed-gpu>=0.3",
+    "nvidia-cublas-cu12>=12.9.2.10",
+    "nvidia-cudnn-cu12>=9.25.1.1",
+    "nvidia-cufft-cu12>=11.4.1.4",
+    "nvidia-cuda-runtime-cu12>=12.9.79",
+    "nvidia-curand-cu12>=10.3.10.19",
+    # onnxruntime-gpu>=1.27 links against CUDA 13 (libcublas.so.13 etc.), but
+    # NVIDIA hasn't published real CUDA-13 pip packages yet (nvidia-*-cu13 are
+    # empty 0.0.1 placeholders on PyPI as of 2026-09-25) — only nvidia-*-cu12
+    # packages above are real. Pin to the last CUDA-12-linked release so the
+    # pip-installed cuDNN/cuBLAS libs actually match what onnxruntime dlopens.
+    "onnxruntime-gpu==1.26.0",
+]
+
+[tool.uv]
+package = false
