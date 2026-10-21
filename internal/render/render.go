@@ -176,3 +176,19 @@ func Index(w io.Writer, jsonMode bool, r wikicmd.IndexReport) error {
 	}
 	return nil
 }
+
+func Init(w io.Writer, jsonMode bool, r wikicmd.InitReport) error {
+	if jsonMode {
+		return encodeJSON(w, r)
+	}
+	s := newStyles(w)
+	if len(r.Created) == 0 {
+		fmt.Fprintf(w, "Vault at %s is already set up.\n", s.path.Render(r.Root))
+		return nil
+	}
+	fmt.Fprintf(w, "Initialized vault at %s\n", s.path.Render(r.Root))
+	for _, c := range r.Created {
+		fmt.Fprintf(w, "  %s %s\n", s.accent.Render("+"), c)
+	}
+	return nil
+}

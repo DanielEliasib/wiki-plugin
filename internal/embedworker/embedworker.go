@@ -23,18 +23,24 @@ type response struct {
 	Vectors [][]float64 `json:"vectors"`
 }
 
-func NewEmbedder(workerDir string) Embedder {
+// NewEmbedder runs the worker in workerDir on the given device ("cpu" or "gpu").
+func NewEmbedder(workerDir, device string) Embedder {
 	return func(texts []string) ([][]float64, error) {
 		reqBytes, err := json.Marshal(request{Texts: texts})
 		if err != nil {
 			return nil, err
 		}
 
-		cmd := exec.Command("uv", "run", "--project", workerDir, "python", "embed_worker.py")
+		// --exact keeps the venv to the chosen extra, so switching between cpu
+		// and gpu never leaves both fastembed packages installed.
+		cmd := exec.Command("uv", "run", "--exact", "--extra", device, "--project", workerDir, "python", "embed_worker.py")
 		cmd.Dir = workerDir
 		cmd.Stdin = bytes.NewReader(reqBytes)
-		if libPath := cudaLibraryPath(workerDir); libPath != "" {
-			cmd.Env = append(os.Environ(), "LD_LIBRARY_PATH="+libPath)
+		cmd.Env = append(os.Environ(), "WIKI_EMBED_DEVICE="+device)
+		if device == "gpu" {
+			if libPath := cudaLibraryPath(workerDir); libPath != "" {
+				cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+libPath)
+			}
 		}
 
 		var stdout, stderr bytes.Buffer
@@ -102,12 +108,36 @@ func ResolveWorkerDir() (string, error) {
 	return "", errors.New("embed worker directory not set: set WIKI_EMBED_WORKER_DIR or embed_worker_dir in the config file")
 }
 
-// DefaultEmbedder embeds via the worker found by ResolveWorkerDir. If none can
-// be found, the returned Embedder reports that on every call.
+// ResolveDevice returns the embedding device: $WIKI_EMBED_DEVICE, then
+// embed_device in the config file, else "cpu".
+func ResolveDevice() (string, error) {
+	device := os.Getenv("WIKI_EMBED_DEVICE")
+	if device == "" {
+		cfg, err := config.Load()
+		if err != nil {
+			return "", err
+		}
+		device = cfg.EmbedDevice
+	}
+	switch device {
+	case "":
+		return "cpu", nil
+	case "cpu", "gpu":
+		return device, nil
+	}
+	return "", fmt.Errorf("embed_device must be cpu or gpu, got %q", device)
+}
+
+// DefaultEmbedder embeds via the worker found by ResolveWorkerDir on the device
+// from ResolveDevice. If either cannot be resolved, the returned Embedder
+// reports that on every call.
 func DefaultEmbedder() Embedder {
 	dir, err := ResolveWorkerDir()
-	if err != nil {
-		return func([]string) ([][]float64, error) { return nil, err }
+	if err == nil {
+		var device string
+		if device, err = ResolveDevice(); err == nil {
+			return NewEmbedder(dir, device)
+		}
 	}
-	return NewEmbedder(dir)
+	return func([]string) ([][]float64, error) { return nil, err }
 }

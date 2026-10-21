@@ -204,3 +204,40 @@ func TestIndexBrowsesFoldersAndOneFolder(t *testing.T) {
 		t.Error("expected an error for an unknown folder")
 	}
 }
+
+func TestInstallDryRunChangesNothing(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "embed_worker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"SKILL.md", filepath.Join("embed_worker", "embed_worker.py")} {
+		if err := os.WriteFile(filepath.Join(repo, f), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claudeDir := filepath.Join(t.TempDir(), ".claude")
+	t.Setenv("CLAUDE_CONFIG_DIR", claudeDir)
+	t.Setenv("WIKI_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
+
+	stdout, _, err := runCmd(t, "install", "--repo", repo, "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Link the skill", "Write the wiki config", "Register the SessionStart hook"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("plan missing %q:\n%s", want, stdout)
+		}
+	}
+	if _, err := os.Stat(claudeDir); err == nil {
+		t.Error("dry run created the Claude dir")
+	}
+}
+
+func TestInstallAbortsWithoutConfirmation(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(t.TempDir(), ".claude"))
+	_, _, err := runCmd(t, "install", "--repo", repo)
+	if err == nil {
+		t.Fatal("want error for a directory that is not a checkout")
+	}
+}

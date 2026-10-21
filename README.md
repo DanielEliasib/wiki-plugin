@@ -16,11 +16,15 @@ to use another path.
 ```yaml
 vault: ~/notes/wiki            # default; also WIKI_ROOT or --vault
 embed_worker_dir: ~/src/wiki_skill/embed_worker   # also WIKI_EMBED_WORKER_DIR
+embed_device: cpu              # default; "gpu" for NVIDIA (CUDA 12); also WIKI_EMBED_DEVICE
 ```
 
-`embed_worker_dir` must point at this repo's `embed_worker/` directory
-(needs [uv](https://docs.astral.sh/uv/)). It is found automatically when the
-binary is `bin/wiki` from `make build`; with `make install` you must set it.
+`embed_worker_dir` must point at this repo's `embed_worker/` directory. It is
+found automatically when the binary is `bin/wiki` from `make build`;
+otherwise `wiki install` writes it for you.
+
+`embed_device: gpu` installs several GB of CUDA wheels into the worker's
+venv; the default `cpu` runs anywhere. Switching device re-syncs the venv.
 
 ## Vault Structure
 
@@ -31,7 +35,7 @@ resources/<slug>/  # reference material not tied to one project/area
 archive/           # closed-out projects/areas, moved here wholesale
 .wiki/
   index.sqlite     # semantic search index — do not hand-edit
-  conventions.md   # shared filing rules, vault-side copy of this README's rules
+  conventions.md   # shared filing rules, written by `wiki init`
 ```
 
 Each `projects|areas|resources` folder has a generated `_index.md` (links
@@ -148,24 +152,43 @@ the "go update a bunch of notes" chore that motivated this whole design.
 
 ## Install
 
+Prerequisites: [Go](https://go.dev/dl/) and [uv](https://docs.astral.sh/uv/).
+
 ```bash
-make build     # -> ./bin/wiki
-make install   # -> $GOPATH/bin/wiki (on $PATH if that's already set up)
-make test      # go test ./...
+make install-skill
 ```
 
-The Claude Code skill itself lives at `~/.claude/skills/wiki`; symlink this
-repo there.
+That runs `go install` (put `$(go env GOPATH)/bin` on your `PATH`), then
+`wiki install`, which shows what it will change and asks before doing it:
+
+1. links this checkout into `~/.claude/skills/wiki` (or `$CLAUDE_CONFIG_DIR`),
+2. writes the config file if you have none, with `embed_worker_dir` filled in,
+3. adds the `wiki map --hook` SessionStart hook to `settings.json` (the
+   original is kept as `settings.json.bak`).
+
+Anything already in place is skipped, so it is safe to re-run. Use
+`wiki install --dry-run` to preview, or `--yes` to skip the prompt.
+
+Then create a vault and build the index:
+
+```bash
+wiki init      # creates the folders and .wiki/conventions.md (adds only what is missing)
+wiki reindex   # first run downloads the embedding model (~130 MB) from Hugging Face
+```
+
+Restart Claude Code to load the skill and hook. Other targets: `make build`
+(`./bin/wiki`), `make test`.
 
 ## Repo Layout
 
 ```
 cmd/wiki/main.go       # CLI entrypoint, subcommand dispatch
+internal/config/       # config file loading
 internal/vault/        # frontmatter I/O, vault root resolution
+internal/install/      # skill link, config and hook installer
 internal/index/        # sqlite-backed semantic index
 internal/embedworker/  # spawns the Python embedding worker
-internal/wikicmd/      # search / reindex / prune command logic
+internal/wikicmd/      # search / reindex / prune / init command logic
 embed_worker/          # thin fastembed wrapper (the only Python left)
-vault-templates/       # conventions.md template copied into new vaults
 SKILL.md               # what Claude Code reads to use this skill
 ```

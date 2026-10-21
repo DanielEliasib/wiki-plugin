@@ -15,6 +15,10 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+cpu = []
+gpu = []
+
 [tool.uv]
 package = false
 `
@@ -38,7 +42,7 @@ json.dump({"vectors": vectors}, sys.stdout)
 
 func TestNewEmbedderReturnsVectorsFromFakeWorker(t *testing.T) {
 	dir := writeFakeWorker(t)
-	embed := NewEmbedder(dir)
+	embed := NewEmbedder(dir, "cpu")
 
 	vectors, err := embed([]string{"hi", "hello there"})
 	if err != nil {
@@ -86,5 +90,31 @@ func TestDefaultEmbedderErrorsWhenUnconfigured(t *testing.T) {
 	t.Setenv("WIKI_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
 	if _, err := DefaultEmbedder()([]string{"hi"}); err == nil {
 		t.Fatal("want error when no worker dir is configured")
+	}
+}
+
+func TestResolveDevice(t *testing.T) {
+	t.Setenv("WIKI_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
+	t.Setenv("WIKI_EMBED_DEVICE", "")
+	if got, err := ResolveDevice(); err != nil || got != "cpu" {
+		t.Errorf("default: got %q, %v; want cpu", got, err)
+	}
+	t.Setenv("WIKI_EMBED_DEVICE", "gpu")
+	if got, err := ResolveDevice(); err != nil || got != "gpu" {
+		t.Errorf("env: got %q, %v; want gpu", got, err)
+	}
+	t.Setenv("WIKI_EMBED_DEVICE", "tpu")
+	if _, err := ResolveDevice(); err == nil {
+		t.Error("want error for an unknown device")
+	}
+
+	t.Setenv("WIKI_EMBED_DEVICE", "")
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(cfgPath, []byte("embed_device: gpu\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WIKI_CONFIG", cfgPath)
+	if got, err := ResolveDevice(); err != nil || got != "gpu" {
+		t.Errorf("config: got %q, %v; want gpu", got, err)
 	}
 }

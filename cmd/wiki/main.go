@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"wiki_skill/internal/config"
 	"wiki_skill/internal/embedworker"
+	"wiki_skill/internal/install"
 	"wiki_skill/internal/render"
 	"wiki_skill/internal/vault"
 	"wiki_skill/internal/wikicmd"
@@ -39,6 +43,8 @@ func newRootCmd() *cobra.Command {
 		newWatchCmd(&vaultFlag, &jsonFlag),
 		newIndexCmd(&vaultFlag, &jsonFlag),
 		newMapCmd(&vaultFlag),
+		newInitCmd(&vaultFlag, &jsonFlag),
+		newInstallCmd(),
 	)
 	return root
 }
@@ -186,6 +192,125 @@ func newIndexCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 			return render.Index(cmd.OutOrStdout(), *jsonFlag, report)
 		},
 	}
+}
+
+func newInitCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
+	return &cobra.Command{
+		Use:           "init",
+		Short:         "Create the vault's folders and conventions file (adds only what is missing)",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			root, err := vault.ResolveVaultRoot(*vaultFlag)
+			if err != nil {
+				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
+				return err
+			}
+			report, err := wikicmd.Init(root)
+			if err != nil {
+				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
+				return err
+			}
+			return render.Init(cmd.OutOrStdout(), *jsonFlag, report)
+		},
+	}
+}
+
+func newInstallCmd() *cobra.Command {
+	var repoFlag string
+	var yes, dryRun bool
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Set up Claude Code: link the skill, write the wiki config, register the SessionStart hook",
+		Long: "Run from a checkout of the wiki skill repo (or pass --repo). Shows what it will change,\n" +
+			"asks to continue, then: links the skill into the Claude config dir, writes the wiki config\n" +
+			"file if there is none, and adds the `wiki map --hook` SessionStart hook to settings.json\n" +
+			"(the original is kept as settings.json.bak). Anything already in place is skipped.",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			err := runInstall(cmd, repoFlag, yes, dryRun)
+			if err != nil {
+				render.Error(cmd.ErrOrStderr(), false, err)
+			}
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&repoFlag, "repo", "", "wiki skill checkout (default: current directory)")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not ask before making changes")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change and stop")
+	return cmd
+}
+
+func runInstall(cmd *cobra.Command, repoFlag string, yes, dryRun bool) error {
+	if repoFlag == "" {
+		repoFlag = "."
+	}
+	repo, err := install.FindRepo(repoFlag)
+	if err != nil {
+		return err
+	}
+	claudeDir, err := install.DefaultClaudeDir()
+	if err != nil {
+		return err
+	}
+	configPath, err := config.Path()
+	if err != nil {
+		return err
+	}
+	plan, err := install.MakePlan(install.Options{RepoDir: repo, ClaudeDir: claudeDir, ConfigPath: configPath})
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	for _, note := range plan.Notes {
+		fmt.Fprintf(out, "ok: %s\n", note)
+	}
+	for _, w := range installWarnings() {
+		fmt.Fprintf(out, "warning: %s\n", w)
+	}
+	if len(plan.Steps) == 0 {
+		fmt.Fprintln(out, "Nothing to do.")
+		return nil
+	}
+	fmt.Fprintln(out, "Will:")
+	for _, s := range plan.Steps {
+		fmt.Fprintf(out, "  - %s: %s\n", s.Name, s.Detail)
+	}
+	if dryRun {
+		return nil
+	}
+	if !yes {
+		fmt.Fprint(out, "Continue? [y/N] ")
+		var answer string
+		fmt.Fscanln(cmd.InOrStdin(), &answer)
+		if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
+			return fmt.Errorf("aborted, nothing changed")
+		}
+	}
+	for _, s := range plan.Steps {
+		if err := s.Apply(); err != nil {
+			return fmt.Errorf("%s: %w", s.Name, err)
+		}
+		fmt.Fprintf(out, "done: %s\n", s.Name)
+	}
+	fmt.Fprintln(out, "Next: `wiki init` to create a vault (or point vault: at an existing one), then `wiki reindex`. Restart Claude Code to load the skill and hook.")
+	return nil
+}
+
+// installWarnings lists missing prerequisites; none of them stop the install.
+func installWarnings() []string {
+	var w []string
+	if _, err := exec.LookPath("uv"); err != nil {
+		w = append(w, "uv is not on PATH; semantic search needs it (https://docs.astral.sh/uv/)")
+	}
+	if _, err := exec.LookPath("wiki"); err != nil {
+		w = append(w, "wiki is not on PATH; the SessionStart hook runs `wiki`, so run `make install` and add $(go env GOPATH)/bin to PATH")
+	}
+	return w
 }
 
 // hookInput is the part of the SessionStart hook's stdin JSON that wiki map uses.
