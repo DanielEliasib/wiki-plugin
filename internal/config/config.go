@@ -19,6 +19,11 @@ type Config struct {
 	EmbedWorkerDir string `yaml:"embed_worker_dir"`
 	// EmbedDevice is "cpu" (default) or "gpu" (NVIDIA CUDA 12).
 	EmbedDevice string `yaml:"embed_device"`
+	// EmbedURL, when set, is an OpenAI-compatible /v1/embeddings endpoint used
+	// instead of the local worker (embed_device is then ignored).
+	EmbedURL string `yaml:"embed_url"`
+	// EmbedModel is the optional "model" field sent to EmbedURL.
+	EmbedModel string `yaml:"embed_model"`
 }
 
 // Path returns the config file location: $WIKI_CONFIG, else
