@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -191,34 +192,43 @@ type NoteText struct {
 	Text string
 }
 
+// RebuildIndex replaces the whole index with notes. Every note is embedded
+// first; the old rows are only replaced, in one transaction, once all vectors
+// are in hand, so a failed or interrupted rebuild leaves the old index intact.
 func RebuildIndex(db *sql.DB, notes []NoteText, embed embedworker.Embedder) error {
-	if _, err := db.Exec("DELETE FROM notes"); err != nil {
-		return err
-	}
-	if len(notes) == 0 {
-		return nil
+	var vectors [][]float64
+	if len(notes) > 0 {
+		texts := make([]string, len(notes))
+		for i, n := range notes {
+			texts[i] = n.Text
+		}
+		var err error
+		if vectors, err = embed(texts); err != nil {
+			return err
+		}
+		if len(vectors) != len(notes) {
+			return fmt.Errorf("embedder returned %d vectors for %d notes", len(vectors), len(notes))
+		}
 	}
 
-	texts := make([]string, len(notes))
-	for i, n := range notes {
-		texts[i] = n.Text
-	}
-	vectors, err := embed(texts)
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
-
+	defer tx.Rollback() // no-op after Commit
+	if _, err := tx.Exec("DELETE FROM notes"); err != nil {
+		return err
+	}
 	for i, n := range notes {
-		blob := ToBlob(vectors[i])
-		_, err := db.Exec(`
+		_, err := tx.Exec(`
 			INSERT INTO notes (path, text, hash, embedding) VALUES (?, ?, ?, ?)
 			ON CONFLICT(path) DO UPDATE SET text = excluded.text, hash = excluded.hash, embedding = excluded.embedding
-		`, n.Path, n.Text, HashText(n.Text), blob)
+		`, n.Path, n.Text, HashText(n.Text), ToBlob(vectors[i]))
 		if err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 func UpsertBatch(db *sql.DB, notes []NoteText, embed embedworker.Embedder) ([]string, error) {

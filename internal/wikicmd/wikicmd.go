@@ -56,7 +56,7 @@ type PruneReport struct {
 
 func openIndexDB(root string) (*sql.DB, string, error) {
 	dbPath := filepath.Join(root, ".wiki", "index.sqlite")
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)")
 	return db, dbPath, err
 }
 
