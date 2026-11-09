@@ -128,10 +128,32 @@ func ResolveDevice() (string, error) {
 	return "", fmt.Errorf("embed_device must be cpu or gpu, got %q", device)
 }
 
-// DefaultEmbedder embeds via the worker found by ResolveWorkerDir on the device
-// from ResolveDevice. If either cannot be resolved, the returned Embedder
-// reports that on every call.
+// DefaultEmbedder embeds via the endpoint from ResolveURL when one is set,
+// else via the worker found by ResolveWorkerDir on the device from
+// ResolveDevice. If those cannot be resolved, the returned Embedder reports
+// that on every call.
 func DefaultEmbedder() Embedder {
+	url, model, err := ResolveURL()
+	if err != nil {
+		return func([]string) ([][]float64, error) { return nil, err }
+	}
+	local := localEmbedder()
+	if url == "" {
+		return local
+	}
+	remote := NewHTTPEmbedder(url, model)
+	// The endpoint and the local worker run the same model, so when the
+	// endpoint can't be reached the local worker stands in.
+	return func(texts []string) ([][]float64, error) {
+		vecs, err := remote(texts)
+		if err != nil && isUnreachable(err) {
+			return local(texts)
+		}
+		return vecs, err
+	}
+}
+
+func localEmbedder() Embedder {
 	dir, err := ResolveWorkerDir()
 	if err == nil {
 		var device string
