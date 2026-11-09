@@ -41,7 +41,7 @@ func RunWatch(root string, embed embedworker.Embedder, debounce time.Duration, s
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)")
 	if err != nil {
 		return err
 	}

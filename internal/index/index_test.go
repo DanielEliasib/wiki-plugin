@@ -2,6 +2,7 @@ package index
 
 import (
 	"database/sql"
+	"errors"
 	"reflect"
 	"sort"
 	"testing"
@@ -255,5 +256,34 @@ func TestInitDBMigratesOldSchemaWithoutHashColumn(t *testing.T) {
 		"new.md", "new text", HashText("new text"), []byte{0, 0, 0, 0},
 	); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRebuildIndexKeepsOldIndexWhenEmbeddingFails(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := InitDB(db); err != nil {
+		t.Fatal(err)
+	}
+	ok := func(texts []string) ([][]float64, error) {
+		out := make([][]float64, len(texts))
+		for i := range texts {
+			out[i] = []float64{1, 0}
+		}
+		return out, nil
+	}
+	if err := RebuildIndex(db, []NoteText{{Path: "a.md", Text: "a"}, {Path: "b.md", Text: "b"}}, ok); err != nil {
+		t.Fatal(err)
+	}
+	failing := func([]string) ([][]float64, error) { return nil, errors.New("embedder down") }
+	if err := RebuildIndex(db, []NoteText{{Path: "c.md", Text: "c"}}, failing); err == nil {
+		t.Fatal("want the embedder error")
+	}
+	var n int
+	if err := db.QueryRow("SELECT count(*) FROM notes").Scan(&n); err != nil || n != 2 {
+		t.Fatalf("rows after failed rebuild = %d (%v), want the old 2", n, err)
 	}
 }
