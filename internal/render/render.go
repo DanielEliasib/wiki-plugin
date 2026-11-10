@@ -83,6 +83,12 @@ func Search(w io.Writer, jsonMode bool, r wikicmd.SearchReport) error {
 			excerpt = "§ " + res.Heading + ": " + excerpt
 		}
 		fmt.Fprintf(w, "    %s\n", s.dim.Render(truncate(excerpt, 200)))
+		for i, l := range res.Lines {
+			if i == 2 {
+				break
+			}
+			fmt.Fprintf(w, "    › %s\n", truncate(strings.Join(strings.Fields(l), " "), 360))
+		}
 	}
 	if !r.SemanticIndexed {
 		fmt.Fprintln(w)

@@ -2,6 +2,7 @@ package keyword
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -33,5 +34,23 @@ func TestMatchDiscountsWordsOfTheNoteTitle(t *testing.T) {
 	q := "power limit in the Alpha Suite test"
 	if title, fact := ix.Match("Alpha Suite test, model details", q, known), ix.Match("power limit was 90 W", q, known); fact <= title {
 		t.Errorf("title line %v should score below the fact line %v", title, fact)
+	}
+}
+
+func TestBestLinesFindTheFact(t *testing.T) {
+	ix := NewIndex([]Doc{{Path: "a.md", Body: "modelz.3 released date"}, {Path: "b.md", Body: "other"}, {Path: "c.md", Body: "more"}})
+	body := "# ModelZ notes\nModelZ.3 is good at text.\n|---|---|\n- Ecosystem: ModelZ.3 (released 2026-01-15) has few LoRAs.\nunrelated"
+	got := ix.BestLines(body, "When was ModelZ.3 released?", Known("modelz-notes.md", "ModelZ notes"), 1)
+	if len(got) != 1 || got[0] != "- Ecosystem: ModelZ.3 (released 2026-01-15) has few LoRAs." {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBestLinesCutLongLinesToTheMatch(t *testing.T) {
+	ix := NewIndex([]Doc{{Path: "a.md", Body: "judge"}, {Path: "b.md", Body: "x"}, {Path: "c.md", Body: "y"}})
+	line := "- Judge calibration: " + strings.Repeat("filler words here ", 20) + "Sonnet strict agreed best with the Opus labels at 89% " + strings.Repeat("tail ", 30)
+	got := ix.BestLines(line, "which judge agreed best with the Opus labels", nil, 1)
+	if len(got) != 1 || !strings.Contains(got[0], "89%") || len(got[0]) > LineChars+8 || !strings.HasPrefix(got[0], "…") {
+		t.Errorf("got %q", got)
 	}
 }

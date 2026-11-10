@@ -23,13 +23,14 @@ import (
 
 // SearchResult is one note, merged from the keyword and the semantic ranking.
 type SearchResult struct {
-	Path    string  `json:"path"`
-	Title   string  `json:"title"`
-	Date    string  `json:"date,omitempty"`
-	Match   string  `json:"match"`          // "keyword", "semantic" or "both"
-	Score   float64 `json:"semantic_score"` // the best section's similarity (0 when only the keywords matched)
-	Heading string  `json:"heading,omitempty"`
-	Excerpt string  `json:"excerpt"` // the section that matches best
+	Path    string   `json:"path"`
+	Title   string   `json:"title"`
+	Date    string   `json:"date,omitempty"`
+	Match   string   `json:"match"`          // "keyword", "semantic" or "both"
+	Score   float64  `json:"semantic_score"` // the best section's similarity (0 when only the keywords matched)
+	Heading string   `json:"heading,omitempty"`
+	Excerpt string   `json:"excerpt"`         // the section that matches best
+	Lines   []string `json:"lines,omitempty"` // the note's lines that share the most (and rarest) words with the query
 }
 
 type GrepMatch struct {
@@ -170,8 +171,9 @@ func ProcessBatch(root string, db *sql.DB, changed, deleted []string, embed embe
 	return upserted, removed, nil
 }
 
-// Search ranks notes two ways, by the query's words (BM25 over the notes, file names and titles weighted) and by
-// meaning (the best section's embedding), and merges both into Results, one per note with the section that matches
+// Search ranks notes three ways, by the query's words (BM25 over the notes, file names and titles weighted; BM25 over
+// sections, for a fact on one line of a long note) and by meaning (the best section's embedding), and merges them
+// into Results, one per note with the section that matches
 // best. GrepMatches (the query as a literal string, as before) and SemanticMatches stay for older callers.
 func Search(root, query string, embed embedworker.Embedder, topK int) (SearchReport, error) {
 	report := SearchReport{Query: query}
@@ -209,7 +211,8 @@ func Search(root, query string, embed embedworker.Embedder, topK int) (SearchRep
 		return SearchReport{}, err
 	}
 	kix := keyword.NewIndex(docs)
-	kwHits := kix.Search(query, 3*topK)
+	kwHits := kix.Search(query, len(docs))
+	secHits := sectionHits(docs, query, len(docs))
 
 	dbPath := filepath.Join(root, ".wiki", "index.sqlite")
 	if _, err := os.Stat(dbPath); err == nil {
@@ -222,18 +225,40 @@ func Search(root, query string, embed embedworker.Embedder, topK int) (SearchRep
 		if err := index.InitDB(db); err != nil {
 			return SearchReport{}, err
 		}
-		results, err := index.Search(db, query, embed, 3*topK)
+		results, err := index.Search(db, query, embed, len(docs)+1) // every note: each candidate gets a similarity
 		if err != nil {
 			return SearchReport{}, err
 		}
 		report.SemanticMatches = results
 	}
 
-	report.Results = mergeResults(root, query, kix, docs, kwHits, report.SemanticMatches, topK)
+	report.Results = mergeResults(root, query, kix, docs, [][]keyword.Hit{kwHits, secHits}, report.SemanticMatches, topK)
 	if len(report.SemanticMatches) > topK {
 		report.SemanticMatches = report.SemanticMatches[:topK]
 	}
 	return report, nil
+}
+
+// sectionHits ranks the notes by their best section's BM25 score (one hit per note, best first).
+func sectionHits(docs []keyword.Doc, query string, k int) []keyword.Hit {
+	var sections []keyword.Doc
+	for _, d := range docs {
+		for _, c := range index.SplitChunks(d.Title + "\n" + d.Body) {
+			sections = append(sections, keyword.Doc{Path: d.Path, Title: d.Title, Body: c.Heading + "\n" + c.Text})
+		}
+	}
+	var out []keyword.Hit
+	seen := map[string]bool{}
+	for _, h := range keyword.NewSectionIndex(sections).Search(query, len(sections)) {
+		if !seen[h.Doc.Path] {
+			seen[h.Doc.Path] = true
+			out = append(out, h)
+			if len(out) == k {
+				break
+			}
+		}
+	}
+	return out
 }
 
 // keywordDocs reads every note for the keyword ranking (generated vault indexes left out).
@@ -277,19 +302,43 @@ func metaString(v any) string {
 	}
 }
 
-// mergeResults fuses the two rankings (reciprocal rank fusion: a note high in both lists wins, and either list
-// alone can still bring a note up) and picks each note's excerpt.
-func mergeResults(root, query string, kix *keyword.Index, docs []keyword.Doc, kw []keyword.Hit, sem []index.Result, topK int) []SearchResult {
-	const k = 60.0
+// mergeResults fuses the rankings and picks each note's excerpt. kw: the keyword rankings (by note, by section);
+// sem: every note's best section similarity. The fusion is a weighted sum of normalised scores (keyword scores over
+// the best one, similarity min-max over all notes): 1/4 note words, 1/4 section words, 1/2 meaning. Reciprocal rank
+// fusion was tried first: it drops a note that one list misses and ignores by how much a list's first beats its
+// second, so a date on one line of a long note (first by both keyword rankings, 15th by meaning) lost to notes that
+// were merely near the top of all three.
+func mergeResults(root, query string, kix *keyword.Index, docs []keyword.Doc, kw [][]keyword.Hit, sem []index.Result, topK int) []SearchResult {
+	pool := 3 * topK // a note in the top pool of a list counts as matched by it (the match label)
 	score := map[string]float64{}
-	inKw, inSem := map[string]bool{}, map[string]index.Result{}
-	for i, h := range kw {
-		score[h.Doc.Path] += 1 / (k + float64(i+1))
-		inKw[h.Doc.Path] = true
+	inKw, inSem, semAll := map[string]bool{}, map[string]bool{}, map[string]index.Result{}
+	kwWeight := 0.5 / float64(len(kw))
+	semWeight := 0.5
+	if len(sem) == 0 {
+		kwWeight, semWeight = 1/float64(len(kw)), 0
 	}
-	for i, r := range sem {
-		score[r.Path] += 1 / (k + float64(i+1))
-		inSem[r.Path] = r
+	for _, list := range kw {
+		if len(list) == 0 || list[0].Score <= 0 {
+			continue
+		}
+		for i, h := range list {
+			score[h.Doc.Path] += kwWeight * h.Score / list[0].Score
+			if i < pool {
+				inKw[h.Doc.Path] = true
+			}
+		}
+	}
+	if len(sem) > 0 {
+		hi, lo := sem[0].Score, sem[len(sem)-1].Score
+		for i, r := range sem {
+			semAll[r.Path] = r
+			if hi > lo {
+				score[r.Path] += semWeight * (r.Score - lo) / (hi - lo)
+			}
+			if i < pool {
+				inSem[r.Path] = true
+			}
+		}
 	}
 	byPath := map[string]keyword.Doc{}
 	for _, d := range docs {
@@ -297,6 +346,9 @@ func mergeResults(root, query string, kix *keyword.Index, docs []keyword.Doc, kw
 	}
 	paths := make([]string, 0, len(score))
 	for p := range score {
+		if !inKw[p] && !inSem[p] {
+			continue
+		}
 		if _, ok := byPath[p]; ok { // a note deleted since the last index update is dropped
 			paths = append(paths, p)
 		}
@@ -315,7 +367,8 @@ func mergeResults(root, query string, kix *keyword.Index, docs []keyword.Doc, kw
 	for _, p := range paths {
 		d := byPath[p]
 		r := SearchResult{Path: p, Title: d.Title, Date: noteDate(filepath.Join(root, p))}
-		sr, semantic := inSem[p]
+		sr, indexed := semAll[p]
+		semantic := inSem[p]
 		switch {
 		case semantic && inKw[p]:
 			r.Match = "both"
@@ -334,7 +387,7 @@ func mergeResults(root, query string, kix *keyword.Index, docs []keyword.Doc, kw
 				bestKw, bestKwScore = c, s
 			}
 		}
-		if semantic {
+		if indexed {
 			r.Score = sr.Score
 			r.Heading, r.Excerpt = sr.Heading, sr.Excerpt
 			if r.Excerpt == "" || bestKwScore > 1.5*kix.Match(r.Excerpt, query, known) {
@@ -344,6 +397,7 @@ func mergeResults(root, query string, kix *keyword.Index, docs []keyword.Doc, kw
 			r.Heading, r.Excerpt = bestKw.Heading, bestKw.Text
 		}
 		r.Excerpt = dropHeadingLine(r.Excerpt, r.Heading)
+		r.Lines = kix.BestLines(d.Body, query, known, 3)
 		out = append(out, r)
 	}
 	return out

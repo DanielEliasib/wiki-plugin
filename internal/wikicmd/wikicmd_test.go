@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"wiki_skill/internal/index"
+	"wiki_skill/internal/keyword"
 
 	_ "modernc.org/sqlite"
 
@@ -704,5 +706,19 @@ func TestDropHeadingLine(t *testing.T) {
 	}
 	if got := dropHeadingLine("## Other\nx", "Speed"); got != "## Other\nx" {
 		t.Errorf("got %q", got)
+	}
+}
+
+// A note first by both keyword rankings but not near the top by meaning still beats notes merely near the top of all
+// three lists (reciprocal rank fusion lost it).
+func TestMergeKeepsAClearKeywordWinner(t *testing.T) {
+	root := t.TempDir()
+	docs := []keyword.Doc{{Path: "a.md", Title: "A"}, {Path: "b.md", Title: "B"}, {Path: "c.md", Title: "C"}}
+	kw := []keyword.Hit{{Doc: docs[2], Score: 20}, {Doc: docs[0], Score: 12}, {Doc: docs[1], Score: 11}}
+	sem := []index.Result{{Path: "a.md", Score: 0.68}, {Path: "b.md", Score: 0.67}, {Path: "x.md", Score: 0.66},
+		{Path: "c.md", Score: 0.60}, {Path: "y.md", Score: 0.40}}
+	out := mergeResults(root, "q", keyword.NewIndex(docs), docs, [][]keyword.Hit{kw, kw}, sem, 1)
+	if len(out) != 1 || out[0].Path != "c.md" || out[0].Score != 0.60 {
+		t.Errorf("got %+v", out)
 	}
 }
