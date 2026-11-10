@@ -2,6 +2,7 @@ package keyword
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -33,5 +34,23 @@ func TestMatchDiscountsWordsOfTheNoteTitle(t *testing.T) {
 	q := "GPU power limit in the Flash Coder test"
 	if title, fact := ix.Match("Flash Coder test, model details", q, known), ix.Match("GPU power limit was 170 W", q, known); fact <= title {
 		t.Errorf("title line %v should score below the fact line %v", title, fact)
+	}
+}
+
+func TestBestLinesFindTheFact(t *testing.T) {
+	ix := NewIndex([]Doc{{Path: "a.md", Body: "flux.3 released date"}, {Path: "b.md", Body: "other"}, {Path: "c.md", Body: "more"}})
+	body := "# FLUX notes\nFLUX.3 is good at text.\n|---|---|\n- Ecosystem: FLUX.3 (released 2026-10-15) has few LoRAs.\nunrelated"
+	got := ix.BestLines(body, "When was FLUX.3 released?", Known("flux-notes.md", "FLUX notes"), 1)
+	if len(got) != 1 || got[0] != "- Ecosystem: FLUX.3 (released 2026-10-15) has few LoRAs." {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestBestLinesCutLongLinesToTheMatch(t *testing.T) {
+	ix := NewIndex([]Doc{{Path: "a.md", Body: "judge"}, {Path: "b.md", Body: "x"}, {Path: "c.md", Body: "y"}})
+	line := "- Judge calibration: " + strings.Repeat("filler words here ", 20) + "Sonnet strict agreed best with the Opus labels at 89% " + strings.Repeat("tail ", 30)
+	got := ix.BestLines(line, "which judge agreed best with the Opus labels", nil, 1)
+	if len(got) != 1 || !strings.Contains(got[0], "89%") || len(got[0]) > LineChars+8 || !strings.HasPrefix(got[0], "…") {
+		t.Errorf("got %q", got)
 	}
 }

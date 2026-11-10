@@ -65,7 +65,7 @@ type entry struct {
 }
 
 // Index is a BM25 index over notes. The file name and the title count three times and the tags twice: they say
-// what a note is about.
+// what a note is about. NewSectionIndex is the same over sections, where they count once.
 type Index struct {
 	docs    []Doc
 	entries []entry
@@ -73,20 +73,29 @@ type Index struct {
 	avg     float64
 }
 
-func NewIndex(docs []Doc) *Index {
+func NewIndex(docs []Doc) *Index { return newIndex(docs, 3, 2) }
+
+// NewSectionIndex ranks sections (Body: one section's text; Path and Title: its note's). A fact that is one line of a
+// long note is lost in the note's BM25 length, and the title weight would favour every note named after the topic;
+// here each section stands alone and the title and file name count once.
+func NewSectionIndex(sections []Doc) *Index { return newIndex(sections, 1, 1) }
+
+func newIndex(docs []Doc, nameWeight, tagWeight int) *Index {
 	ix := &Index{docs: docs, df: map[string]int{}}
 	total := 0
 	for _, d := range docs {
 		name := strings.TrimSuffix(filepath.Base(d.Path), ".md")
 		var words []string
-		for range 3 {
+		for range nameWeight {
 			words = append(words, Terms(name)...)
 			words = append(words, Terms(d.Title)...)
 		}
-		for range 2 {
+		for range tagWeight {
 			words = append(words, Terms(d.Tags)...)
 		}
-		words = append(words, Terms(filepath.Dir(d.Path))...)
+		if nameWeight > 1 {
+			words = append(words, Terms(filepath.Dir(d.Path))...)
+		}
 		words = append(words, Terms(d.Body)...)
 		tf := map[string]int{}
 		for _, w := range words {
@@ -112,6 +121,7 @@ func (ix *Index) IDF(w string) float64 {
 
 type Hit struct {
 	Doc   Doc
+	N     int // the doc's position in the slice given to NewIndex
 	Score float64
 }
 
@@ -127,7 +137,7 @@ func (ix *Index) Search(query string, k int) []Hit {
 			}
 		}
 		if s > 0 {
-			hits = append(hits, Hit{Doc: ix.docs[i], Score: s})
+			hits = append(hits, Hit{Doc: ix.docs[i], N: i, Score: s})
 		}
 	}
 	sort.SliceStable(hits, func(a, b int) bool { return hits[a].Score > hits[b].Score })
@@ -155,6 +165,107 @@ func (ix *Index) Match(text, query string, known map[string]bool) float64 {
 		}
 	}
 	return s
+}
+
+// BestLines are the n lines of body that match the query best (Match, at least one query word), best first.
+// Table rows and list items are lines, so this is often the fact itself.
+func (ix *Index) BestLines(body, query string, known map[string]bool, n int) []string {
+	type scored struct {
+		i int
+		s float64
+	}
+	lines := strings.Split(body, "\n")
+	var c []scored
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(strings.TrimSpace(l), "|---") {
+			continue
+		}
+		if s := ix.Match(l, query, known); s > 0 {
+			c = append(c, scored{i, s})
+		}
+	}
+	sort.SliceStable(c, func(a, b int) bool { return c[a].s > c[b].s })
+	if len(c) > n {
+		c = c[:n]
+	}
+	out := make([]string, len(c))
+	for i, x := range c {
+		out[i] = ix.window(strings.TrimSpace(lines[x.i]), query, LineChars)
+	}
+	return out
+}
+
+// LineChars: a matching line longer than this is cut to the part with the most query words (a fact late in a long
+// list item would otherwise be cut off by whoever shows it).
+const LineChars = 360
+
+// window returns the max-character stretch of line (cut at spaces, "…" where cut) holding the most IDF of the
+// query's words.
+func (ix *Index) window(line, query string, max int) string {
+	if len(line) <= max {
+		return line
+	}
+	q := map[string]bool{}
+	for _, w := range Terms(query) {
+		q[w] = true
+	}
+	// the byte offsets of the line's words that are query words, with their weight
+	type hit struct {
+		at int
+		w  float64
+	}
+	var hits []hit
+	lower := strings.ToLower(line)
+	for i := 0; i < len(lower); {
+		j := i
+		for j < len(lower) && lower[j] != ' ' {
+			j++
+		}
+		for _, t := range Terms(lower[i:j]) {
+			if q[t] {
+				hits = append(hits, hit{i, ix.IDF(t)})
+				break
+			}
+		}
+		i = j + 1
+	}
+	best, bestScore := 0, -1.0
+	for _, h := range hits {
+		start := h.at - 20 // a little context before the first word
+		if start < 0 {
+			start = 0
+		}
+		s := 0.0
+		for _, o := range hits {
+			if o.at >= start && o.at < start+max-10 {
+				s += o.w
+			}
+		}
+		if s > bestScore {
+			best, bestScore = start, s
+		}
+	}
+	if best+max > len(line) {
+		best = len(line) - max
+	}
+	for best > 0 && line[best-1] != ' ' { // start at a word
+		best--
+	}
+	end := best + max
+	if end > len(line) {
+		end = len(line)
+	}
+	for end < len(line) && end > best && line[end] != ' ' { // end at a word
+		end--
+	}
+	out := strings.TrimSpace(line[best:end])
+	if best > 0 {
+		out = "…" + out
+	}
+	if end < len(line) {
+		out += "…"
+	}
+	return out
 }
 
 // Known is the set of words of a note's file name and title.
