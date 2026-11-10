@@ -113,12 +113,15 @@ func TestWriteNoteThenReadNote(t *testing.T) {
 	}
 }
 
-func TestIterNotesExcludesDotWikiDir(t *testing.T) {
+func TestIterNotesExcludesHiddenDirs(t *testing.T) {
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "Projects", "demo"), 0o755)
 	os.WriteFile(filepath.Join(dir, "Projects", "demo", "a.md"), []byte("a"), 0o644)
 	os.MkdirAll(filepath.Join(dir, ".wiki"), 0o755)
 	os.WriteFile(filepath.Join(dir, ".wiki", "conventions.md"), []byte("skip me"), 0o644)
+	// a git worktree of the vault under .claude: copies of the notes, not notes
+	os.MkdirAll(filepath.Join(dir, ".claude", "worktrees", "w", "Projects", "demo"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".claude", "worktrees", "w", "Projects", "demo", "a.md"), []byte("a"), 0o644)
 
 	notes, err := IterNotes(dir)
 	if err != nil {

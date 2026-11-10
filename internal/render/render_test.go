@@ -33,7 +33,9 @@ func TestSearchJSON(t *testing.T) {
 
 func TestSearchHuman(t *testing.T) {
 	report := wikicmd.SearchReport{
-		Query:           "test query",
+		Query: "test query",
+		Results: []wikicmd.SearchResult{{Path: "a.md", Title: "A note", Date: "2026-10-22", Match: "both", Score: 0.9,
+			Heading: "Speed", Excerpt: "## Speed\n43.1 t/s"}},
 		GrepMatches:     []wikicmd.GrepMatch{{File: "a.md", Line: 3, Text: "hit"}},
 		SemanticMatches: []index.Result{{Path: "a.md", Score: 0.9, Snippet: "hit"}},
 		SemanticIndexed: true,
@@ -43,7 +45,7 @@ func TestSearchHuman(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	for _, want := range []string{"Grep matches", "a.md", "Semantic matches", "0.900"} {
+	for _, want := range []string{"Results", "a.md", "both, similarity 0.90", "A note (2026-10-22)", "## Speed 43.1 t/s", "Exact phrase matches", "line 3"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in: %s", want, out)
 		}

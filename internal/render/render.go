@@ -57,11 +57,45 @@ func Search(w io.Writer, jsonMode bool, r wikicmd.SearchReport) error {
 	}
 	s := newStyles(w)
 
-	fmt.Fprintln(w, s.header.Render("Grep matches"))
+	fmt.Fprintln(w, s.header.Render("Results (best first; match: keyword, semantic or both)"))
 	fmt.Fprintln(w)
+	if len(r.Results) == 0 {
+		fmt.Fprintln(w, s.dim.Render("  (no matches)"))
+	}
+	for i, res := range r.Results {
+		if i > 0 {
+			fmt.Fprintln(w)
+		}
+		title := res.Title
+		if res.Date != "" && !strings.Contains(title, res.Date) {
+			title += " (" + res.Date + ")"
+		}
+		how := res.Match
+		if res.Score > 0 {
+			how += fmt.Sprintf(", similarity %.2f", res.Score)
+		}
+		fmt.Fprintf(w, "  %s  %s\n", s.path.Render(res.Path), s.dim.Render(how))
+		if title != "" {
+			fmt.Fprintf(w, "    %s\n", title)
+		}
+		excerpt := strings.Join(strings.Fields(res.Excerpt), " ")
+		if res.Heading != "" && !strings.HasPrefix(strings.TrimLeft(res.Excerpt, "# "), res.Heading) {
+			excerpt = "§ " + res.Heading + ": " + excerpt
+		}
+		fmt.Fprintf(w, "    %s\n", s.dim.Render(truncate(excerpt, 200)))
+	}
+	if !r.SemanticIndexed {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, s.dim.Render("  (keyword matches only: no semantic index yet — run reindex)"))
+	}
 	if len(r.GrepMatches) == 0 {
-		fmt.Fprintln(w, s.dim.Render("  (no grep matches)"))
-	} else {
+		return nil
+	}
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, s.header.Render("Exact phrase matches"))
+	fmt.Fprintln(w)
+	{
 		for i, m := range r.GrepMatches {
 			if i > 0 {
 				fmt.Fprintln(w)
@@ -71,23 +105,6 @@ func Search(w io.Writer, jsonMode bool, r wikicmd.SearchReport) error {
 		}
 	}
 
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, s.header.Render("Semantic matches"))
-	fmt.Fprintln(w)
-	switch {
-	case !r.SemanticIndexed:
-		fmt.Fprintln(w, s.dim.Render("  (no semantic index yet — run reindex)"))
-	case len(r.SemanticMatches) == 0:
-		fmt.Fprintln(w, s.dim.Render("  (no semantic matches)"))
-	default:
-		for i, res := range r.SemanticMatches {
-			if i > 0 {
-				fmt.Fprintln(w)
-			}
-			fmt.Fprintf(w, "  %s  %s\n", s.accent.Render(fmt.Sprintf("%.3f", res.Score)), s.path.Render(res.Path))
-			fmt.Fprintf(w, "         %s\n", s.dim.Render(truncate(res.Snippet, 90)))
-		}
-	}
 	return nil
 }
 
