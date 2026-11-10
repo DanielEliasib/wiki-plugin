@@ -25,7 +25,7 @@ Before researching, deciding, configuring, or asking the user for a fact:
 wiki search "<query>" --top-k 10
 ```
 
-- Run one or two queries built from the task's nouns. Prints ripgrep matches, then semantic matches.
+- Run one or two queries built from the task's nouns. Prints the best notes, one entry per note (ranked by keywords and by meaning, per section): path, title, date and the passage that matched; then any exact-phrase matches.
 - Read the top hits, not just the titles. Use what you find and cite it by note title. Flag a hit that contradicts what you were about to do.
 - Browse instead of searching when you want the inventory: `wiki index` lists every folder with its gist; `wiki index <name>` lists one folder's notes (`<kind>/<name>` if the name exists in two buckets).
 - Skip the search for trivial edits and anything fully inside the current repo.

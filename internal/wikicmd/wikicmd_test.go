@@ -110,6 +110,47 @@ func TestSearchReportsGrepAndSemanticMatches(t *testing.T) {
 	}
 }
 
+func TestSearchMergesKeywordAndSemanticResults(t *testing.T) {
+	root := makeVault(t)
+	writeNote(t, root, "projects/demo/speed-bench-2026-03-02.md", "Speed bench", map[string]interface{}{"date": "2026-03-02"},
+		"Intro.\n\n## Speed\nModel X: 12.5 t/s.\n")
+	if _, err := Reindex(root, fakeEmbedder); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Search(root, "speed in the speed bench of 2026-03-02 (tokens per second)", fakeEmbedder, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Results) == 0 {
+		t.Fatal("no results")
+	}
+	r := report.Results[0]
+	if r.Path != "projects/demo/speed-bench-2026-03-02.md" || r.Title != "Speed bench" || r.Date != "2026-03-02" {
+		t.Errorf("first result %+v", r)
+	}
+	if !strings.Contains(r.Excerpt, "12.5 t/s") || r.Match == "" {
+		t.Errorf("excerpt %q, match %q", r.Excerpt, r.Match)
+	}
+	seen := map[string]bool{}
+	for _, x := range report.Results {
+		if seen[x.Path] || strings.HasSuffix(x.Path, "_index.md") {
+			t.Errorf("duplicate or generated index in results: %s", x.Path)
+		}
+		seen[x.Path] = true
+	}
+}
+
+func TestSearchKeywordResultsWithoutIndex(t *testing.T) {
+	root := makeVault(t)
+	report, err := Search(root, "orphan", fakeEmbedder, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Results) != 1 || report.Results[0].Path != "projects/demo/orphan-note.md" || report.Results[0].Match != "keyword" {
+		t.Errorf("got %+v", report.Results)
+	}
+}
+
 func TestSearchWithoutIndexReportsNotIndexed(t *testing.T) {
 	root := makeVault(t)
 
@@ -654,5 +695,14 @@ func TestInitCreatesVaultAndIsIdempotent(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(conventions); string(got) != "mine" {
 		t.Errorf("conventions overwritten: %q", got)
+	}
+}
+
+func TestDropHeadingLine(t *testing.T) {
+	if got := dropHeadingLine("## Speed\n12.5 t/s", "Speed"); got != "12.5 t/s" {
+		t.Errorf("got %q", got)
+	}
+	if got := dropHeadingLine("## Other\nx", "Speed"); got != "## Other\nx" {
+		t.Errorf("got %q", got)
 	}
 }

@@ -64,6 +64,92 @@ func InitDB(db *sql.DB) error {
 		}
 	}
 
+	// One row per section of a note (chunks.go). An index from before chunks has notes but no chunks: their hashes
+	// are cleared so the next reindex or watch pass embeds them again, by section.
+	var hasChunks int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'chunks'").Scan(&hasChunks); err != nil {
+		return err
+	}
+	if hasChunks == 0 {
+		if _, err := db.Exec(`
+			CREATE TABLE chunks (
+				path TEXT NOT NULL,
+				idx INTEGER NOT NULL,
+				heading TEXT NOT NULL,
+				text TEXT NOT NULL,
+				embedding BLOB NOT NULL,
+				PRIMARY KEY (path, idx)
+			)
+		`); err != nil {
+			return err
+		}
+		if _, err := db.Exec("UPDATE notes SET hash = ''"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// embedded is a note with its whole-note vector and its chunks' vectors.
+type embedded struct {
+	path, text, hash string
+	vec              []float64
+	chunks           []Chunk
+	chunkVecs        [][]float64
+}
+
+// embedNotes embeds every note whole and by chunk, in one call to the embedder.
+func embedNotes(notes []NoteText, embed embedworker.Embedder) ([]embedded, error) {
+	out := make([]embedded, len(notes))
+	var texts []string
+	for i, n := range notes {
+		out[i] = embedded{path: n.Path, text: n.Text, hash: HashText(n.Text), chunks: SplitChunks(n.Text)}
+		texts = append(texts, n.Text)
+		for _, c := range out[i].chunks {
+			texts = append(texts, chunkEmbedText(titleOf(n.Text), c))
+		}
+	}
+	if len(texts) == 0 {
+		return out, nil
+	}
+	vectors, err := embed(texts)
+	if err != nil {
+		return nil, err
+	}
+	if len(vectors) != len(texts) {
+		return nil, fmt.Errorf("embedder returned %d vectors for %d texts", len(vectors), len(texts))
+	}
+	k := 0
+	for i := range out {
+		out[i].vec = vectors[k]
+		k++
+		out[i].chunkVecs = vectors[k : k+len(out[i].chunks)]
+		k += len(out[i].chunks)
+	}
+	return out, nil
+}
+
+// writeNote stores a note's row and replaces its chunks.
+func writeNote(db execer, e embedded) error {
+	if _, err := db.Exec(`
+		INSERT INTO notes (path, text, hash, embedding) VALUES (?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET text = excluded.text, hash = excluded.hash, embedding = excluded.embedding
+	`, e.path, e.text, e.hash, ToBlob(e.vec)); err != nil {
+		return err
+	}
+	if _, err := db.Exec("DELETE FROM chunks WHERE path = ?", e.path); err != nil {
+		return err
+	}
+	for i, c := range e.chunks {
+		if _, err := db.Exec("INSERT INTO chunks (path, idx, heading, text, embedding) VALUES (?, ?, ?, ?, ?)",
+			e.path, i, c.Heading, c.Text, ToBlob(e.chunkVecs[i])); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -125,66 +211,99 @@ func UpsertNote(db *sql.DB, path, text string, embed embedworker.Embedder) error
 		return nil
 	}
 
-	vectors, err := embed([]string{text})
+	e, err := embedNotes([]NoteText{{Path: path, Text: text}}, embed)
 	if err != nil {
 		return err
 	}
-	blob := ToBlob(vectors[0])
-	_, err = db.Exec(`
-		INSERT INTO notes (path, text, hash, embedding) VALUES (?, ?, ?, ?)
-		ON CONFLICT(path) DO UPDATE SET text = excluded.text, hash = excluded.hash, embedding = excluded.embedding
-	`, path, text, hash, blob)
-	return err
+	return writeNote(db, e[0])
 }
 
 func RemoveNote(db *sql.DB, path string) error {
+	if _, err := db.Exec("DELETE FROM chunks WHERE path = ?", path); err != nil {
+		return err
+	}
 	_, err := db.Exec("DELETE FROM notes WHERE path = ?", path)
 	return err
 }
 
+// Result is one note: its best-matching chunk's score, heading and text.
 type Result struct {
 	Path    string  `json:"path"`
 	Score   float64 `json:"score"`
 	Snippet string  `json:"snippet"`
+	Heading string  `json:"heading,omitempty"`
+	Excerpt string  `json:"excerpt,omitempty"`
 }
 
+// Search ranks notes by their best chunk's similarity to the query, one result per note. Notes without chunks (an
+// index from before chunks, not yet re-embedded) are scored by their whole-note vector.
 func Search(db *sql.DB, query string, embed embedworker.Embedder, topK int) ([]Result, error) {
 	vectors, err := embed([]string{query})
 	if err != nil {
 		return nil, err
 	}
 	queryVec := vectors[0]
+	best := map[string]Result{}
+	consider := func(r Result) {
+		if cur, ok := best[r.Path]; !ok || r.Score > cur.Score {
+			best[r.Path] = r
+		}
+	}
 
-	rows, err := db.Query("SELECT path, text, embedding FROM notes")
+	rows, err := db.Query("SELECT path, heading, text, embedding FROM chunks")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	for rows.Next() {
+		var path, heading, text string
+		var blob []byte
+		if err := rows.Scan(&path, &heading, &text, &blob); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		consider(Result{Path: path, Score: Cosine(queryVec, FromBlob(blob)), Snippet: snippet(text), Heading: heading, Excerpt: text})
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 
-	var results []Result
+	rows, err = db.Query("SELECT path, text, embedding FROM notes WHERE path NOT IN (SELECT DISTINCT path FROM chunks)")
+	if err != nil {
+		return nil, err
+	}
 	for rows.Next() {
 		var path, text string
 		var blob []byte
 		if err := rows.Scan(&path, &text, &blob); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		score := Cosine(queryVec, FromBlob(blob))
-		snippet := text
-		if len(snippet) > 160 {
-			snippet = snippet[:160]
-		}
-		snippet = strings.ReplaceAll(snippet, "\n", " ")
-		results = append(results, Result{Path: path, Score: score, Snippet: snippet})
+		consider(Result{Path: path, Score: Cosine(queryVec, FromBlob(blob)), Snippet: snippet(text)})
 	}
-	if err := rows.Err(); err != nil {
+	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 
+	results := make([]Result, 0, len(best))
+	for _, r := range best {
+		results = append(results, r)
+	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
 	if len(results) > topK {
 		results = results[:topK]
 	}
 	return results, nil
+}
+
+func snippet(text string) string {
+	if len(text) > 160 {
+		cut := 160
+		for cut > 0 && (text[cut]&0xC0) == 0x80 {
+			cut--
+		}
+		text = text[:cut]
+	}
+	return strings.ReplaceAll(text, "\n", " ")
 }
 
 type NoteText struct {
@@ -196,19 +315,9 @@ type NoteText struct {
 // first; the old rows are only replaced, in one transaction, once all vectors
 // are in hand, so a failed or interrupted rebuild leaves the old index intact.
 func RebuildIndex(db *sql.DB, notes []NoteText, embed embedworker.Embedder) error {
-	var vectors [][]float64
-	if len(notes) > 0 {
-		texts := make([]string, len(notes))
-		for i, n := range notes {
-			texts[i] = n.Text
-		}
-		var err error
-		if vectors, err = embed(texts); err != nil {
-			return err
-		}
-		if len(vectors) != len(notes) {
-			return fmt.Errorf("embedder returned %d vectors for %d notes", len(vectors), len(notes))
-		}
+	all, err := embedNotes(notes, embed)
+	if err != nil {
+		return err
 	}
 
 	tx, err := db.Begin()
@@ -219,12 +328,11 @@ func RebuildIndex(db *sql.DB, notes []NoteText, embed embedworker.Embedder) erro
 	if _, err := tx.Exec("DELETE FROM notes"); err != nil {
 		return err
 	}
-	for i, n := range notes {
-		_, err := tx.Exec(`
-			INSERT INTO notes (path, text, hash, embedding) VALUES (?, ?, ?, ?)
-			ON CONFLICT(path) DO UPDATE SET text = excluded.text, hash = excluded.hash, embedding = excluded.embedding
-		`, n.Path, n.Text, HashText(n.Text), ToBlob(vectors[i]))
-		if err != nil {
+	if _, err := tx.Exec("DELETE FROM chunks"); err != nil {
+		return err
+	}
+	for _, e := range all {
+		if err := writeNote(tx, e); err != nil {
 			return err
 		}
 	}
@@ -254,26 +362,21 @@ func UpsertBatch(db *sql.DB, notes []NoteText, embed embedworker.Embedder) ([]st
 		return nil, nil
 	}
 
-	texts := make([]string, len(toEmbed))
+	pendingNotes := make([]NoteText, len(toEmbed))
 	for i, p := range toEmbed {
-		texts[i] = p.text
+		pendingNotes[i] = NoteText{Path: p.path, Text: p.text}
 	}
-	vectors, err := embed(texts)
+	all, err := embedNotes(pendingNotes, embed)
 	if err != nil {
 		return nil, err
 	}
 
-	upserted := make([]string, 0, len(toEmbed))
-	for i, p := range toEmbed {
-		blob := ToBlob(vectors[i])
-		_, err := db.Exec(`
-			INSERT INTO notes (path, text, hash, embedding) VALUES (?, ?, ?, ?)
-			ON CONFLICT(path) DO UPDATE SET text = excluded.text, hash = excluded.hash, embedding = excluded.embedding
-		`, p.path, p.text, p.hash, blob)
-		if err != nil {
+	upserted := make([]string, 0, len(all))
+	for _, e := range all {
+		if err := writeNote(db, e); err != nil {
 			return nil, err
 		}
-		upserted = append(upserted, p.path)
+		upserted = append(upserted, e.path)
 	}
 	return upserted, nil
 }

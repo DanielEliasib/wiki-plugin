@@ -133,8 +133,9 @@ func IterNotes(root string) ([]string, error) {
 		if relErr != nil {
 			return relErr
 		}
+		// hidden folders (.wiki's own data, .obsidian, .claude/worktrees copies of the vault) hold no notes
 		for _, part := range strings.Split(rel, string(filepath.Separator)) {
-			if part == ".wiki" {
+			if strings.HasPrefix(part, ".") {
 				return nil
 			}
 		}

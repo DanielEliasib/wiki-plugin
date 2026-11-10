@@ -3,6 +3,7 @@ package wikicmd
 import (
 	"bytes"
 	"database/sql"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -16,8 +17,20 @@ import (
 
 	"wiki_skill/internal/embedworker"
 	"wiki_skill/internal/index"
+	"wiki_skill/internal/keyword"
 	"wiki_skill/internal/vault"
 )
+
+// SearchResult is one note, merged from the keyword and the semantic ranking.
+type SearchResult struct {
+	Path    string  `json:"path"`
+	Title   string  `json:"title"`
+	Date    string  `json:"date,omitempty"`
+	Match   string  `json:"match"`          // "keyword", "semantic" or "both"
+	Score   float64 `json:"semantic_score"` // the best section's similarity (0 when only the keywords matched)
+	Heading string  `json:"heading,omitempty"`
+	Excerpt string  `json:"excerpt"` // the section that matches best
+}
 
 type GrepMatch struct {
 	File string `json:"file"`
@@ -27,6 +40,7 @@ type GrepMatch struct {
 
 type SearchReport struct {
 	Query           string         `json:"query"`
+	Results         []SearchResult `json:"results"`
 	GrepMatches     []GrepMatch    `json:"grep_matches"`
 	SemanticMatches []index.Result `json:"semantic_matches"`
 	SemanticIndexed bool           `json:"semantic_indexed"`
@@ -156,10 +170,14 @@ func ProcessBatch(root string, db *sql.DB, changed, deleted []string, embed embe
 	return upserted, removed, nil
 }
 
+// Search ranks notes two ways, by the query's words (BM25 over the notes, file names and titles weighted) and by
+// meaning (the best section's embedding), and merges both into Results, one per note with the section that matches
+// best. GrepMatches (the query as a literal string, as before) and SemanticMatches stay for older callers.
 func Search(root, query string, embed embedworker.Embedder, topK int) (SearchReport, error) {
 	report := SearchReport{Query: query}
 
-	cmd := exec.Command("rg", "--line-number", "--no-heading", "-i", query, root)
+	// -F: the query is text, not a regex ("(tokens per second)" is not a group)
+	cmd := exec.Command("rg", "--line-number", "--no-heading", "-i", "-F", "--", query, root)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	_ = cmd.Run() // rg exits non-zero when there are no matches; that's not an error here
@@ -186,24 +204,166 @@ func Search(root, query string, embed embedworker.Embedder, topK int) (SearchRep
 		report.GrepMatches = report.GrepMatches[:20]
 	}
 
+	docs, err := keywordDocs(root)
+	if err != nil {
+		return SearchReport{}, err
+	}
+	kix := keyword.NewIndex(docs)
+	kwHits := kix.Search(query, 3*topK)
+
 	dbPath := filepath.Join(root, ".wiki", "index.sqlite")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return report, nil
+	if _, err := os.Stat(dbPath); err == nil {
+		report.SemanticIndexed = true
+		db, _, err := openIndexDB(root)
+		if err != nil {
+			return SearchReport{}, err
+		}
+		defer db.Close()
+		if err := index.InitDB(db); err != nil {
+			return SearchReport{}, err
+		}
+		results, err := index.Search(db, query, embed, 3*topK)
+		if err != nil {
+			return SearchReport{}, err
+		}
+		report.SemanticMatches = results
 	}
-	report.SemanticIndexed = true
 
-	db, _, err := openIndexDB(root)
-	if err != nil {
-		return SearchReport{}, err
+	report.Results = mergeResults(root, query, kix, docs, kwHits, report.SemanticMatches, topK)
+	if len(report.SemanticMatches) > topK {
+		report.SemanticMatches = report.SemanticMatches[:topK]
 	}
-	defer db.Close()
-
-	results, err := index.Search(db, query, embed, topK)
-	if err != nil {
-		return SearchReport{}, err
-	}
-	report.SemanticMatches = results
 	return report, nil
+}
+
+// keywordDocs reads every note for the keyword ranking (generated vault indexes left out).
+func keywordDocs(root string) ([]keyword.Doc, error) {
+	paths, err := vault.IterNotes(root)
+	if err != nil {
+		return nil, err
+	}
+	var docs []keyword.Doc
+	for _, p := range paths {
+		if isVaultIndex(p) {
+			continue
+		}
+		note, err := vault.ReadNote(p)
+		if err != nil {
+			continue // a note with broken frontmatter is skipped, not fatal for search
+		}
+		rel, _ := filepath.Rel(root, p)
+		title, _ := note.Meta["title"].(string)
+		docs = append(docs, keyword.Doc{Path: rel, Title: title, Tags: metaString(note.Meta["tags"]), Body: note.Body})
+	}
+	return docs, nil
+}
+
+func metaString(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case time.Time:
+		return t.Format("2006-01-02")
+	case []any:
+		parts := make([]string, len(t))
+		for i, x := range t {
+			parts[i] = fmt.Sprint(x)
+		}
+		return strings.Join(parts, " ")
+	default:
+		return fmt.Sprint(t)
+	}
+}
+
+// mergeResults fuses the two rankings (reciprocal rank fusion: a note high in both lists wins, and either list
+// alone can still bring a note up) and picks each note's excerpt.
+func mergeResults(root, query string, kix *keyword.Index, docs []keyword.Doc, kw []keyword.Hit, sem []index.Result, topK int) []SearchResult {
+	const k = 60.0
+	score := map[string]float64{}
+	inKw, inSem := map[string]bool{}, map[string]index.Result{}
+	for i, h := range kw {
+		score[h.Doc.Path] += 1 / (k + float64(i+1))
+		inKw[h.Doc.Path] = true
+	}
+	for i, r := range sem {
+		score[r.Path] += 1 / (k + float64(i+1))
+		inSem[r.Path] = r
+	}
+	byPath := map[string]keyword.Doc{}
+	for _, d := range docs {
+		byPath[d.Path] = d
+	}
+	paths := make([]string, 0, len(score))
+	for p := range score {
+		if _, ok := byPath[p]; ok { // a note deleted since the last index update is dropped
+			paths = append(paths, p)
+		}
+	}
+	sort.SliceStable(paths, func(a, b int) bool {
+		if score[paths[a]] != score[paths[b]] {
+			return score[paths[a]] > score[paths[b]]
+		}
+		return paths[a] < paths[b]
+	})
+	if len(paths) > topK {
+		paths = paths[:topK]
+	}
+
+	out := make([]SearchResult, 0, len(paths))
+	for _, p := range paths {
+		d := byPath[p]
+		r := SearchResult{Path: p, Title: d.Title, Date: noteDate(filepath.Join(root, p))}
+		sr, semantic := inSem[p]
+		switch {
+		case semantic && inKw[p]:
+			r.Match = "both"
+		case semantic:
+			r.Match = "semantic"
+		default:
+			r.Match = "keyword"
+		}
+		// the excerpt: the semantic half's best section, unless another section matches the query's words clearly
+		// better (the semantic half can prefer a section that only shares the note's topic)
+		known := keyword.Known(p, d.Title)
+		var bestKw index.Chunk
+		bestKwScore := -1.0
+		for _, c := range index.SplitChunks(d.Title + "\n" + d.Body) {
+			if s := kix.Match(c.Text, query, known); s > bestKwScore {
+				bestKw, bestKwScore = c, s
+			}
+		}
+		if semantic {
+			r.Score = sr.Score
+			r.Heading, r.Excerpt = sr.Heading, sr.Excerpt
+			if r.Excerpt == "" || bestKwScore > 1.5*kix.Match(r.Excerpt, query, known) {
+				r.Heading, r.Excerpt = bestKw.Heading, bestKw.Text
+			}
+		} else {
+			r.Heading, r.Excerpt = bestKw.Heading, bestKw.Text
+		}
+		r.Excerpt = dropHeadingLine(r.Excerpt, r.Heading)
+		out = append(out, r)
+	}
+	return out
+}
+
+// dropHeadingLine removes a chunk's own heading line from its start: the heading is reported on its own.
+func dropHeadingLine(text, heading string) string {
+	first, rest, _ := strings.Cut(text, "\n")
+	if heading != "" && strings.HasPrefix(first, "#") && strings.TrimSpace(strings.TrimLeft(first, "#")) == heading {
+		return strings.TrimSpace(rest)
+	}
+	return text
+}
+
+func noteDate(path string) string {
+	note, err := vault.ReadNote(path)
+	if err != nil {
+		return ""
+	}
+	return metaString(note.Meta["date"])
 }
 
 func Prune(root string, similarityThreshold float64, staleDays float64) (PruneReport, error) {

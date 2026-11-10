@@ -78,8 +78,9 @@ the "go update a bunch of notes" chore that motivated this whole design.
   project overview and Claude writes a `type: topic` page instead of an
   atomic note.
 - **Recall something.** Ask Claude to find a past note — it runs `wiki
-  search`, combining grep and semantic recall, so it can find things even
-  when your phrasing doesn't match the note's exact words.
+  search`, combining keyword ranking (BM25; file names and titles weigh
+  most) with section-level semantic recall, so it finds a note named after
+  the thing asked about and also one that only matches in meaning.
 - **Record an update without editing history.** Tell Claude something
   changed and it writes a new atomic note with `superseded_by:` rather than
   silently rewriting the old one.
@@ -105,8 +106,12 @@ the "go update a bunch of notes" chore that motivated this whole design.
   ```bash
   wiki search "some query" --top-k 10
   ```
-  Flags can go before or after the query. Prints grep matches, then
-  semantic matches from the local index.
+  Flags can go before or after the query. Prints one entry per note, best
+  first: path, how it matched (keyword, semantic or both), the semantic
+  similarity, title and date, and the section that matched. Exact-phrase
+  matches of the whole query follow. Without an index (`wiki reindex`) only
+  keyword ranking runs. Hidden folders (`.claude/`, `.wiki/`, ...) are never
+  indexed or searched.
 - **Browse the vault:**
   ```bash
   wiki index          # every Project/Area/Resource with its gist

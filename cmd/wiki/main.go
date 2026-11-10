@@ -60,7 +60,7 @@ func newSearchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 	var topK int
 	cmd := &cobra.Command{
 		Use:           "search <query>",
-		Short:         "Search notes via grep and semantic similarity",
+		Short:         "Search notes by keywords and meaning, one result per note",
 		Args:          cobra.ExactArgs(1),
 		SilenceErrors: true,
 		SilenceUsage:  true,
