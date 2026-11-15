@@ -3,6 +3,7 @@ package wikicmd
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -149,6 +150,11 @@ func noteToIndexText(root, path string) (index.NoteText, error) {
 // changed since they were indexed are embedded again, and notes whose file is gone are dropped. full rebuilds the
 // whole index from scratch (needed after changing the embedding model), keeping the old index if that fails.
 func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport, error) {
+	unlock, err := index.Lock(root)
+	if err != nil {
+		return ReindexReport{}, err
+	}
+	defer unlock()
 	dbPath := index.Path(root)
 	db, err := index.Open(root)
 	if err != nil {
@@ -160,12 +166,11 @@ func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport,
 		return ReindexReport{}, err
 	}
 
-	paths, err := vault.IterNotes(root)
-	if err != nil {
-		return ReindexReport{}, err
-	}
-
 	if full {
+		paths, err := vault.IterNotes(root)
+		if err != nil {
+			return ReindexReport{}, err
+		}
 		var notes []index.NoteText
 		for _, p := range paths {
 			nt, err := noteToIndexText(root, p)
@@ -180,25 +185,11 @@ func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport,
 		return ReindexReport{NotesIndexed: len(notes), Embedded: len(notes), Full: true, DBPath: dbPath}, nil
 	}
 
-	// Incremental: the same step `wiki watch` takes, for every note on disk and every indexed note whose file is gone
-	// (the vault indexes were just written above).
-	onDisk := make(map[string]bool, len(paths))
-	for _, p := range paths {
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return ReindexReport{}, err
-		}
-		onDisk[rel] = true
-	}
-	indexed, err := index.IndexedPaths(db)
+	// Incremental: the same step `wiki watch` takes, for every note on disk and every indexed note whose file is
+	// gone (the vault indexes were just written above).
+	paths, gone, err := catchUpWith(root, db)
 	if err != nil {
 		return ReindexReport{}, err
-	}
-	var gone []string
-	for _, rel := range indexed {
-		if !onDisk[rel] {
-			gone = append(gone, filepath.Join(root, rel))
-		}
 	}
 	out, err := apply(root, paths, gone, embed, false)
 	if err != nil {
@@ -209,6 +200,43 @@ func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport,
 		report.Failed = append(report.Failed, fmt.Sprintf("%s: %v", f.Path, f.Err))
 	}
 	return report, nil
+}
+
+// catchUp lists what the index may be missing: every Note on disk (applying one whose text is unchanged costs a hash
+// comparison) and every indexed path whose file is gone. `wiki reindex` applies it; `wiki watch` does at start, for
+// what changed while nothing was watching.
+func catchUp(root string) (changed, gone []string, err error) {
+	db, err := index.Open(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer db.Close()
+	return catchUpWith(root, db)
+}
+
+func catchUpWith(root string, db *sql.DB) (changed, gone []string, err error) {
+	changed, err = vault.IterNotes(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	onDisk := make(map[string]bool, len(changed))
+	for _, p := range changed {
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return nil, nil, err
+		}
+		onDisk[rel] = true
+	}
+	indexed, err := index.IndexedPaths(db)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, rel := range indexed {
+		if !onDisk[rel] {
+			gone = append(gone, filepath.Join(root, rel))
+		}
+	}
+	return changed, gone, nil
 }
 
 // Search ranks notes three ways, by the query's words (BM25 over the notes, file names and titles weighted; BM25 over

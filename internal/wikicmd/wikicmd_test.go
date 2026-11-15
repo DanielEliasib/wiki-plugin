@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"wiki_skill/internal/index"
@@ -1104,5 +1105,94 @@ func TestBacklinksFollowObsidianLinkSyntax(t *testing.T) {
 	}
 	if counts["target"] != 2 || counts["other"] != 1 || counts["fenced"] != 0 {
 		t.Errorf("got %v, want target 2 (the alias in a table, the other case), other 1, fenced 0", counts)
+	}
+}
+
+// Two writers on one index (wiki watch and wiki reindex, say): the one that read an older version of a note and
+// embeds slowly must not overwrite the newer version the other wrote meanwhile.
+func TestConcurrentApplyKeepsTheNewerNote(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "projects", "demo", "first-note.md")
+	writeNote(t, root, "projects/demo/first-note.md", "First Note", nil, "version one\n")
+
+	started, release := make(chan struct{}), make(chan struct{})
+	slow := func(texts []string) ([][]float64, error) {
+		close(started)
+		<-release
+		return fakeEmbedder(texts)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if _, err := Apply(root, []string{path}, nil, slow); err != nil {
+			t.Error(err)
+		}
+	}()
+	<-started
+	writeNote(t, root, "projects/demo/first-note.md", "First Note", nil, "version two\n")
+	second := make(chan struct{})
+	go func() {
+		defer close(second)
+		if _, err := Apply(root, []string{path}, nil, fakeEmbedder); err != nil {
+			t.Error(err)
+		}
+	}()
+	select {
+	case <-second: // no lock: the second writer finished first
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	wg.Wait()
+	<-second
+
+	want, err := noteToIndexText(root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := index.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	got, found, err := index.HashForPath(db, "projects/demo/first-note.md")
+	if err != nil || !found || got != index.HashText(want.Text) {
+		t.Errorf("the index holds an older version of the note (hash %s, found %v, err %v)", got, found, err)
+	}
+}
+
+func TestCatchUpFindsWhatChangedWhileNothingWatched(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	// while no watcher ran: one note deleted, one added, one edited
+	if err := os.Remove(filepath.Join(root, "projects", "demo", "orphan-note.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeNote(t, root, "projects/demo/added.md", "Added", nil, "new\n")
+	writeNote(t, root, "projects/demo/first-note.md", "First Note", nil, "edited\n")
+
+	changed, gone, err := catchUp(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(changed)
+	if !reflect.DeepEqual(gone, []string{filepath.Join(root, "projects", "demo", "orphan-note.md")}) {
+		t.Errorf("gone %v", gone)
+	}
+	for _, name := range []string{"added.md", "first-note.md"} {
+		found := false
+		for _, c := range changed {
+			if c == filepath.Join(root, "projects", "demo", name) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s missing from %v", name, changed)
+		}
 	}
 }

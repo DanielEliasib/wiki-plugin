@@ -27,6 +27,11 @@ type Outcome struct {
 // Note that cannot be read goes into Outcome.Failed and the others are applied anyway; an error means the whole
 // batch failed (the embedder or the index) and every path may be tried again.
 func Apply(root string, changed, deleted []string, embed embedworker.Embedder) (Outcome, error) {
+	unlock, err := index.Lock(root)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer unlock()
 	return apply(root, changed, deleted, embed, true)
 }
 

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 
 	_ "modernc.org/sqlite"
 
@@ -21,6 +22,28 @@ import (
 // Path is where the Search index of a Vault lives.
 func Path(root string) string {
 	return filepath.Join(root, ".wiki", "index.sqlite")
+}
+
+// Lock takes the writer lock of the Search index, waiting for whoever holds it. Whoever reads Notes, embeds them
+// and writes the index (`wiki watch`, `wiki reindex`) holds it for the whole run, so one that read an older version
+// of a Note cannot overwrite the newer version another wrote meanwhile. Searches do not need it. The lock is
+// released by the returned function or when the process ends.
+func Lock(root string) (unlock func(), err error) {
+	if err := os.MkdirAll(filepath.Dir(Path(root)), 0o755); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(filepath.Join(root, ".wiki", "index.lock"), os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return func() {
+		syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		f.Close()
+	}, nil
 }
 
 // Open opens (creating it if needed) the Search index of the Vault at root.

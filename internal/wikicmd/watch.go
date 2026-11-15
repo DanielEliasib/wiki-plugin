@@ -34,7 +34,7 @@ func addDirsRecursively(watcher *fsnotify.Watcher, root, dir string) error {
 }
 
 // RunWatch watches root for note changes and incrementally updates the
-// semantic index. It runs on a single goroutine: filesystem events and the
+// semantic index; it first applies whatever changed while nothing was watching. It runs on a single goroutine: filesystem events and the
 // debounce timer are both read from the same select loop, so there is no
 // concurrent access to the pending-change sets.
 func RunWatch(root string, embed embedworker.Embedder, debounce time.Duration, stderr io.Writer, onBatch func(upserted, removed []string)) error {
@@ -75,6 +75,22 @@ func RunWatch(root string, embed embedworker.Embedder, debounce time.Duration, s
 			timer.Reset(d)
 		}
 		timerC = timer.C
+	}
+
+	// What changed while nothing was watching: queue it like any other change (an unchanged note costs a hash
+	// comparison, nothing is embedded for it).
+	if changed, gone, err := catchUp(root); err != nil {
+		fmt.Fprintf(stderr, "wiki watch: could not check what changed before it started: %v\n", err)
+	} else {
+		for _, p := range changed {
+			pending.Add(p, false)
+		}
+		for _, p := range gone {
+			pending.Add(p, true)
+		}
+		if !pending.Empty() {
+			wait(10 * time.Millisecond)
+		}
 	}
 
 	for {

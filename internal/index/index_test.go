@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -443,5 +444,34 @@ func TestNearDuplicatesPairsNotesAboveTheThreshold(t *testing.T) {
 func TestCosineOfDifferentLengthsIsZeroNotAPanic(t *testing.T) {
 	if got := Cosine([]float64{1, 2}, []float64{1, 2, 3}); got != 0 {
 		t.Errorf("got %v", got)
+	}
+}
+
+func TestLockExcludesAnotherHolderUntilReleased(t *testing.T) {
+	root := t.TempDir()
+	unlock, err := Lock(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquired := make(chan struct{})
+	go func() {
+		u, err := Lock(root)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		close(acquired)
+		u()
+	}()
+	select {
+	case <-acquired:
+		t.Fatal("a second holder got the lock while it was held")
+	case <-time.After(200 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case <-acquired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the lock was not handed over after unlock")
 	}
 }
