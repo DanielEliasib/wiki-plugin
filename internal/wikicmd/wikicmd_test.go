@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 	"wiki_skill/internal/index"
-	"wiki_skill/internal/keyword"
 
 	_ "modernc.org/sqlite"
 
@@ -704,29 +703,6 @@ func TestInitCreatesVaultAndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestDropHeadingLine(t *testing.T) {
-	if got := dropHeadingLine("## Speed\n12.5 t/s", "Speed"); got != "12.5 t/s" {
-		t.Errorf("got %q", got)
-	}
-	if got := dropHeadingLine("## Other\nx", "Speed"); got != "## Other\nx" {
-		t.Errorf("got %q", got)
-	}
-}
-
-// A note first by both keyword rankings but not near the top by meaning still beats notes merely near the top of all
-// three lists (reciprocal rank fusion lost it).
-func TestMergeKeepsAClearKeywordWinner(t *testing.T) {
-	root := t.TempDir()
-	docs := []keyword.Doc{{Path: "a.md", Title: "A"}, {Path: "b.md", Title: "B"}, {Path: "c.md", Title: "C"}}
-	kw := []keyword.Hit{{Doc: docs[2], Score: 20}, {Doc: docs[0], Score: 12}, {Doc: docs[1], Score: 11}}
-	sem := []index.Result{{Path: "a.md", Score: 0.68}, {Path: "b.md", Score: 0.67}, {Path: "x.md", Score: 0.66},
-		{Path: "c.md", Score: 0.60}, {Path: "y.md", Score: 0.40}}
-	out := mergeResults(root, "q", keyword.NewIndex(docs), docs, [][]keyword.Hit{kw, kw}, sem, 1)
-	if len(out) != 1 || out[0].Path != "c.md" || out[0].Score != 0.60 {
-		t.Errorf("got %+v", out)
-	}
-}
-
 // countingEmbedder wraps fakeEmbedder and records how many texts it was asked to embed.
 func countingEmbedder(n *int) func([]string) ([][]float64, error) {
 	return func(texts []string) ([][]float64, error) {
@@ -994,5 +970,56 @@ func TestWatchStepGivesUpWithAHintToReindex(t *testing.T) {
 	}
 	if !p.Empty() || !strings.Contains(log.String(), "wiki reindex") {
 		t.Errorf("empty %v, log %q", p.Empty(), log.String())
+	}
+}
+
+func TestSearchFallsBackToKeywordsWhenTheEmbedderFails(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	down := func(texts []string) ([][]float64, error) { return nil, errors.New("embed worker down") }
+
+	report, err := Search(root, "orphan", down, 5)
+	if err != nil {
+		t.Fatalf("a failing embedder must not fail the search: %v", err)
+	}
+	if len(report.Results) != 1 || report.Results[0].Path != "projects/demo/orphan-note.md" || report.Results[0].Match != "keyword" {
+		t.Errorf("got %+v", report.Results)
+	}
+	if !strings.Contains(report.Warning, "embed worker down") || !report.SemanticIndexed {
+		t.Errorf("warning %q, semantic_indexed %v", report.Warning, report.SemanticIndexed)
+	}
+}
+
+func TestSearchFallsBackToKeywordsWhenTheEmbeddingModelChanged(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	threeDim := func(texts []string) ([][]float64, error) {
+		out := make([][]float64, len(texts))
+		for i := range texts {
+			out[i] = []float64{1, 2, 3}
+		}
+		return out, nil
+	}
+	report, err := Search(root, "orphan", threeDim, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Results) != 1 || !strings.Contains(report.Warning, "reindex --full") {
+		t.Errorf("results %+v, warning %q", report.Results, report.Warning)
+	}
+}
+
+func TestSearchHasNoWarningWhenAllIsWell(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Search(root, "orphan", fakeEmbedder, 5)
+	if err != nil || report.Warning != "" {
+		t.Errorf("err %v, warning %q", err, report.Warning)
 	}
 }

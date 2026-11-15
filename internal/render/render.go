@@ -90,6 +90,10 @@ func Search(w io.Writer, jsonMode bool, r wikicmd.SearchReport) error {
 			fmt.Fprintf(w, "    › %s\n", truncate(strings.Join(strings.Fields(l), " "), 360))
 		}
 	}
+	if r.Warning != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, s.dim.Render("  ("+r.Warning+")"))
+	}
 	if !r.SemanticIndexed {
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, s.dim.Render("  (keyword matches only: no semantic index yet — run reindex)"))
