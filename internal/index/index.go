@@ -314,7 +314,11 @@ func FromBlob(blob []byte) []float64 {
 	return vec
 }
 
+// Cosine is the cosine similarity of two vectors; vectors of different lengths have none (0).
 func Cosine(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return 0
+	}
 	var dot, na, nb float64
 	for i := range a {
 		dot += a[i] * b[i]
@@ -516,4 +520,44 @@ func IndexedPaths(db *sql.DB) ([]string, error) {
 		paths = append(paths, p)
 	}
 	return paths, rows.Err()
+}
+
+// Pair is two notes whose whole-note vectors are alike.
+type Pair struct {
+	PathA, PathB string
+	Similarity   float64
+}
+
+// NearDuplicates lists every pair of notes at least threshold similar, in path order.
+func NearDuplicates(db *sql.DB, threshold float64) ([]Pair, error) {
+	rows, err := db.Query("SELECT path, embedding FROM notes ORDER BY path")
+	if err != nil {
+		return nil, err
+	}
+	type entry struct {
+		path string
+		vec  []float64
+	}
+	var entries []entry
+	for rows.Next() {
+		var p string
+		var blob []byte
+		if err := rows.Scan(&p, &blob); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		entries = append(entries, entry{p, FromBlob(blob)})
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	var pairs []Pair
+	for i := range entries {
+		for j := i + 1; j < len(entries); j++ {
+			if sim := Cosine(entries[i].vec, entries[j].vec); sim >= threshold {
+				pairs = append(pairs, Pair{entries[i].path, entries[j].path, sim})
+			}
+		}
+	}
+	return pairs, nil
 }

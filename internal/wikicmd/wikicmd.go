@@ -439,38 +439,13 @@ func Prune(root string, similarityThreshold float64, staleDays float64) (PruneRe
 		if err != nil {
 			return PruneReport{}, err
 		}
-		rows, err := db.Query("SELECT path, embedding FROM notes")
+		pairs, err := index.NearDuplicates(db, similarityThreshold)
+		db.Close()
 		if err != nil {
-			db.Close()
 			return PruneReport{}, err
 		}
-		type vecEntry struct {
-			path string
-			vec  []float64
-		}
-		var entries []vecEntry
-		for rows.Next() {
-			var p string
-			var blob []byte
-			if err := rows.Scan(&p, &blob); err != nil {
-				rows.Close()
-				db.Close()
-				return PruneReport{}, err
-			}
-			entries = append(entries, vecEntry{path: p, vec: index.FromBlob(blob)})
-		}
-		rows.Close()
-		db.Close()
-
-		for i := 0; i < len(entries); i++ {
-			for j := i + 1; j < len(entries); j++ {
-				sim := index.Cosine(entries[i].vec, entries[j].vec)
-				if sim >= similarityThreshold {
-					report.MergeCandidates = append(report.MergeCandidates, MergeCandidate{
-						PathA: entries[i].path, PathB: entries[j].path, Similarity: sim,
-					})
-				}
-			}
+		for _, p := range pairs {
+			report.MergeCandidates = append(report.MergeCandidates, MergeCandidate{PathA: p.PathA, PathB: p.PathB, Similarity: p.Similarity})
 		}
 	}
 

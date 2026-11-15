@@ -412,3 +412,36 @@ func TestOpenCreatesTheIndexInsideTheVault(t *testing.T) {
 		t.Errorf("Path = %s", got)
 	}
 }
+
+func TestNearDuplicatesPairsNotesAboveTheThreshold(t *testing.T) {
+	db := openTestDB(t)
+	same := func(texts []string) ([][]float64, error) {
+		out := make([][]float64, len(texts))
+		for i, t := range texts {
+			if strings.HasPrefix(t, "other") {
+				out[i] = []float64{0, 1}
+			} else {
+				out[i] = []float64{1, 0}
+			}
+		}
+		return out, nil
+	}
+	for path, text := range map[string]string{"a.md": "first", "b.md": "second", "c.md": "other"} {
+		if err := UpsertNote(db, path, text, same); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pairs, err := NearDuplicates(db, 0.92)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pairs) != 1 || pairs[0].PathA != "a.md" || pairs[0].PathB != "b.md" || pairs[0].Similarity < 0.99 {
+		t.Errorf("got %+v, want only a.md/b.md", pairs)
+	}
+}
+
+func TestCosineOfDifferentLengthsIsZeroNotAPanic(t *testing.T) {
+	if got := Cosine([]float64{1, 2}, []float64{1, 2, 3}); got != 0 {
+		t.Errorf("got %v", got)
+	}
+}
