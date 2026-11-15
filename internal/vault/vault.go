@@ -20,6 +20,12 @@ type Note struct {
 	Body string
 }
 
+// Title is the frontmatter title, or "" when there is none.
+func (n Note) Title() string {
+	title, _ := n.Meta["title"].(string)
+	return title
+}
+
 var frontmatterRe = regexp.MustCompile(`(?s)^---\n(.*?\n)---\n(.*)$`)
 
 func expandHome(p string) (string, error) {
@@ -120,26 +126,77 @@ func WriteNote(path string, meta map[string]interface{}, body string) error {
 	return os.WriteFile(path, []byte(rendered), 0o644)
 }
 
-func IterNotes(root string) ([]string, error) {
-	var notes []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+// Kind says what a path in the Vault is.
+type Kind int
+
+const (
+	KindNone      Kind = iota // not a Note: another file type, or inside a hidden folder
+	KindNote                  // a Note
+	KindOverview              // a project, area or resource's _overview.md: a Note, flagged
+	KindGenerated             // a generated _index.md (Vault index): never a Note
+)
+
+const (
+	overviewFile  = "_overview.md"
+	generatedFile = "_index.md"
+)
+
+// IsHiddenName reports whether a file or folder name is hidden. Hidden folders (.wiki's own data, .obsidian,
+// .claude/worktrees copies of the Vault) hold no Notes.
+func IsHiddenName(name string) bool {
+	return strings.HasPrefix(name, ".")
+}
+
+// Classify decides what a Vault-relative path is. It looks only at the path.
+func Classify(rel string) Kind {
+	if !strings.HasSuffix(rel, ".md") {
+		return KindNone
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if IsHiddenName(part) {
+			return KindNone
+		}
+	}
+	switch filepath.Base(rel) {
+	case generatedFile:
+		return KindGenerated
+	case overviewFile:
+		return KindOverview
+	}
+	return KindNote
+}
+
+// Walk calls fn, in lexical order, for every Note, overview and generated index under dir (a folder inside root),
+// skipping hidden folders and other files.
+func Walk(root, dir string, fn func(path string, kind Kind) error) error {
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".md") {
+		if d.IsDir() {
+			if path != root && IsHiddenName(d.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
 		}
-		// hidden folders (.wiki's own data, .obsidian, .claude/worktrees copies of the vault) hold no notes
-		for _, part := range strings.Split(rel, string(filepath.Separator)) {
-			if strings.HasPrefix(part, ".") {
-				return nil
-			}
+		if kind := Classify(rel); kind != KindNone {
+			return fn(path, kind)
 		}
-		notes = append(notes, path)
+		return nil
+	})
+}
+
+// IterNotes lists the absolute paths of every Note and overview in the Vault, sorted. Generated indexes are left out.
+func IterNotes(root string) ([]string, error) {
+	var notes []string
+	err := Walk(root, root, func(path string, kind Kind) error {
+		if kind != KindGenerated {
+			notes = append(notes, path)
+		}
 		return nil
 	})
 	if err != nil {

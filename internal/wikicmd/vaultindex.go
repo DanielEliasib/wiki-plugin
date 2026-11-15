@@ -2,7 +2,6 @@ package wikicmd
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,14 +44,10 @@ func listFolders(root string) []folder {
 // starting with "_" (the generated vault index and the overview) are not notes.
 func folderNotes(dir string) ([]string, error) {
 	var notes []string
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	err := vault.Walk(dir, dir, func(path string, kind vault.Kind) error {
+		if kind == vault.KindNote && !strings.HasPrefix(filepath.Base(path), "_") {
+			notes = append(notes, path)
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".md") || strings.HasPrefix(d.Name(), "_") {
-			return nil
-		}
-		notes = append(notes, path)
 		return nil
 	})
 	sort.Strings(notes)
@@ -64,9 +59,8 @@ func noteStem(path string) string {
 }
 
 func noteTitle(path string) string {
-	note, err := vault.ReadNote(path)
-	if err == nil {
-		if title, _ := note.Meta["title"].(string); title != "" {
+	if note, err := vault.ReadNote(path); err == nil {
+		if title := note.Title(); title != "" {
 			return title
 		}
 	}
@@ -116,14 +110,25 @@ func WriteVaultIndexes(root string) error {
 	return nil
 }
 
-func withoutVaultIndexes(paths []string) []string {
+// onlyNotes keeps the absolute paths that are Notes (or overviews) of the Vault: no generated indexes, no hidden
+// folders, no other file types.
+func onlyNotes(root string, paths []string) []string {
 	var kept []string
 	for _, p := range paths {
-		if !isVaultIndex(p) {
+		if isNotePath(root, p) {
 			kept = append(kept, p)
 		}
 	}
 	return kept
+}
+
+func isNotePath(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	kind := vault.Classify(rel)
+	return kind == vault.KindNote || kind == vault.KindOverview
 }
 
 // refreshVaultIndexes regenerates the _index.md of every folder that holds a

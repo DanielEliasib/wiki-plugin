@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -85,7 +84,7 @@ func noteToIndexText(root, path string) (index.NoteText, error) {
 	if err != nil {
 		return index.NoteText{}, err
 	}
-	title, _ := note.Meta["title"].(string)
+	title := note.Title()
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return index.NoteText{}, err
@@ -122,9 +121,6 @@ func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport,
 
 	var notes []index.NoteText
 	for _, p := range paths {
-		if isVaultIndex(p) {
-			continue
-		}
 		nt, err := noteToIndexText(root, p)
 		if err != nil {
 			return ReindexReport{}, err
@@ -172,8 +168,8 @@ func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport,
 // were actually upserted and removed, for callers that report on activity
 // (e.g. wiki watch --json).
 func ProcessBatch(root string, db *sql.DB, changed, deleted []string, embed embedworker.Embedder) (upserted, removed []string, err error) {
-	changed = withoutVaultIndexes(changed)
-	deleted = withoutVaultIndexes(deleted)
+	changed = onlyNotes(root, changed)
+	deleted = onlyNotes(root, deleted)
 	if err := refreshVaultIndexes(root, changed, deleted); err != nil {
 		return nil, nil, err
 	}
@@ -305,16 +301,12 @@ func keywordDocs(root string) ([]keyword.Doc, error) {
 	}
 	var docs []keyword.Doc
 	for _, p := range paths {
-		if isVaultIndex(p) {
-			continue
-		}
 		note, err := vault.ReadNote(p)
 		if err != nil {
 			continue // a note with broken frontmatter is skipped, not fatal for search
 		}
 		rel, _ := filepath.Rel(root, p)
-		title, _ := note.Meta["title"].(string)
-		docs = append(docs, keyword.Doc{Path: rel, Title: title, Tags: metaString(note.Meta["tags"]), Body: note.Body})
+		docs = append(docs, keyword.Doc{Path: rel, Title: note.Title(), Tags: metaString(note.Meta["tags"]), Body: note.Body})
 	}
 	return docs, nil
 }
@@ -517,11 +509,11 @@ func Prune(root string, similarityThreshold float64, staleDays float64) (PruneRe
 			folder := filepath.Join(bucketDir, name)
 			var newest time.Time
 			found := false
-			filepath.WalkDir(folder, func(p string, d fs.DirEntry, err error) error {
-				if err != nil || d.IsDir() || !strings.HasSuffix(p, ".md") || isVaultIndex(p) {
+			vault.Walk(folder, folder, func(p string, kind vault.Kind) error {
+				if kind == vault.KindGenerated {
 					return nil
 				}
-				info, infoErr := d.Info()
+				info, infoErr := os.Stat(p)
 				if infoErr != nil {
 					return nil
 				}

@@ -782,3 +782,27 @@ func TestReindexFullReembedsEveryNote(t *testing.T) {
 		t.Fatalf("full reindex: %d texts embedded, report %+v", calls, report)
 	}
 }
+
+func TestProcessBatchIgnoresPathsThatAreNotNotes(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(root, ".wiki", "index.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	hidden := filepath.Join(root, ".claude", "worktrees", "w", "projects", "demo", "copy.md")
+	if err := vault.WriteNote(hidden, map[string]interface{}{"title": "Copy"}, "A copy of a note.\n"); err != nil {
+		t.Fatal(err)
+	}
+	upserted, removed, err := ProcessBatch(root, db, []string{hidden}, nil, fakeEmbedder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(upserted) != 0 || len(removed) != 0 {
+		t.Errorf("a note in a hidden folder was indexed: upserted %v removed %v", upserted, removed)
+	}
+}

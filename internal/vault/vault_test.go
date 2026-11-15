@@ -153,3 +153,55 @@ func TestResolveVaultRootUsesConfigFile(t *testing.T) {
 		t.Errorf("env should win over config, got %q", got)
 	}
 }
+
+func TestClassifyDecidesWhatIsANote(t *testing.T) {
+	cases := []struct {
+		rel  string
+		want Kind
+	}{
+		{"projects/demo/a.md", KindNote},
+		{"a.md", KindNote},
+		{"projects/demo/_overview.md", KindOverview},
+		{"projects/demo/_index.md", KindGenerated},
+		{"projects/demo/a.txt", KindNone},
+		{"projects/demo/a.md.swp", KindNone},
+		{".wiki/conventions.md", KindNone},
+		{".obsidian/x.md", KindNone},
+		{".claude/worktrees/w/projects/demo/a.md", KindNone},
+		{"projects/.hidden/a.md", KindNone},
+		{"projects/demo/_other.md", KindNote},
+	}
+	for _, c := range cases {
+		if got := Classify(filepath.FromSlash(c.rel)); got != c.want {
+			t.Errorf("Classify(%q) = %v, want %v", c.rel, got, c.want)
+		}
+	}
+}
+
+func TestIterNotesIncludesOverviewsButNotGeneratedIndexes(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "projects", "demo"), 0o755)
+	for _, f := range []string{"a.md", "_overview.md", "_index.md"} {
+		os.WriteFile(filepath.Join(dir, "projects", "demo", f), []byte("x"), 0o644)
+	}
+	notes, err := IterNotes(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		filepath.Join(dir, "projects", "demo", "_overview.md"),
+		filepath.Join(dir, "projects", "demo", "a.md"),
+	}
+	if !reflect.DeepEqual(notes, want) {
+		t.Errorf("got %v, want %v", notes, want)
+	}
+}
+
+func TestNoteTitleIsFrontmatterTitle(t *testing.T) {
+	if got := (Note{Meta: map[string]interface{}{"title": "Demo"}}).Title(); got != "Demo" {
+		t.Errorf("got %q", got)
+	}
+	if got := (Note{Meta: map[string]interface{}{"title": 3}}).Title(); got != "" {
+		t.Errorf("non-string title should be empty, got %q", got)
+	}
+}

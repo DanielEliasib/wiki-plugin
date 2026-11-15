@@ -41,7 +41,7 @@ func readOverview(f folder) overview {
 		return overview{}
 	}
 	var o overview
-	o.Title, _ = note.Meta["title"].(string)
+	o.Title = note.Title()
 	o.Summary, _ = note.Meta["summary"].(string)
 	if list, ok := note.Meta["paths"].([]interface{}); ok {
 		for _, p := range list {
