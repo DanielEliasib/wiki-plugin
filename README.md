@@ -145,7 +145,7 @@ the "go update a bunch of notes" chore that motivated this whole design.
   ```bash
   wiki map --cwd "$PWD"
   ```
-  At most ~750 tokens; `wiki map --hook` is what the SessionStart hook
+  Every folder with its gist, then up to ~750 tokens of notes (pinned first); `wiki map --hook` is what the SessionStart hook
   runs (registration snippet in `reference.md`).
 - **Reindex after manual edits:**
   ```bash

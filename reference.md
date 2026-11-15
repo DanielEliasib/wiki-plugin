@@ -42,7 +42,7 @@ wiki map --cwd "$PWD"   # plain text, for inspecting by hand
 wiki map --hook         # SessionStart hook: reads hook JSON on stdin, prints hook JSON
 ```
 
-At most ~750 tokens: a nudge line, every folder with gist and note count (the folder whose `paths:` contains the working directory is tagged `← cwd`), then pinned notes, then the highest-scoring notes. Score = 1.0·ln(1+backlinks) + 1.0·0.5^(age/30 days) + 4.0 if the note is in a cwd-matched folder. It reads the vault live, never writes or embeds, and with `--hook` prints nothing and exits 0 on any error.
+A nudge line, every folder with gist and note count (the folder whose `paths:` contains the working directory is tagged `← cwd`), then a list of at most ~750 tokens of notes: pinned notes first, then the highest-scoring ones. Score = 1.0·ln(1+backlinks) + 1.0·0.5^(age/30 days) + 4.0 if the note is in a cwd-matched folder. It reads the vault live, never writes or embeds, and with `--hook` prints nothing and exits 0 on any error.
 
 `wiki install` registers this hook for you. To do it by hand, add it to `~/.claude/settings.json`. The matcher keeps `resume` and `fork` silent (they already carry the map in their transcript):
 

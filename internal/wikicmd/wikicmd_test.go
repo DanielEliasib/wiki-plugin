@@ -560,7 +560,7 @@ func TestMapCwdMatchBoostsFolderNotesAndTagsIt(t *testing.T) {
 	}
 }
 
-func TestMapStaysWithinTokenBudget(t *testing.T) {
+func TestMapNotesStayWithinTheirBudget(t *testing.T) {
 	root := t.TempDir()
 	for i := 0; i < 30; i++ {
 		name := fmt.Sprintf("proj-%02d", i)
@@ -574,11 +574,38 @@ func TestMapStaysWithinTokenBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if tokens := len(out) / 4; tokens > 750 {
-		t.Errorf("map is ~%d tokens, want at most 750", tokens)
+	_, notes, found := strings.Cut(out, "\nNotes:\n")
+	if !found {
+		t.Fatalf("no notes section:\n%s", out)
 	}
-	if !strings.Contains(out, "proj-00") {
+	if tokens := len(notes) / 4; tokens > 750 {
+		t.Errorf("the notes are ~%d tokens, want at most 750", tokens)
+	}
+	if !strings.Contains(out, "proj-00") || !strings.Contains(out, "proj-29") {
 		t.Errorf("folder list must still be complete:\n%s", out)
+	}
+}
+
+// A vault whose folder list alone is larger than the notes budget still gets its notes, pinned ones first.
+func TestMapShowsPinnedNotesEvenWhenManyFoldersFillTheList(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < 60; i++ {
+		name := fmt.Sprintf("proj-%02d", i)
+		writeOverview(t, root, "projects", name, map[string]interface{}{"title": name, "summary": strings.Repeat("a long gist ", 12)})
+		writeNote(t, root, fmt.Sprintf("projects/%s/plain.md", name), "Plain "+name, nil, "x\n")
+	}
+	writeNote(t, root, "projects/proj-59/pinned-one.md", "The pinned one", map[string]interface{}{"pinned": true}, "x\n")
+
+	out, err := Map(root, "/x", mapNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	folders, notes, found := strings.Cut(out, "\nNotes:\n")
+	if len(folders) < 750*4 {
+		t.Fatalf("the test vault's folder list is only %d bytes: it must exceed the budget to mean anything", len(folders))
+	}
+	if !found || !strings.HasPrefix(notes, "- The pinned one [projects/proj-59/pinned-one.md]") {
+		t.Errorf("pinned note not first in the notes:\n%s", notes)
 	}
 }
 

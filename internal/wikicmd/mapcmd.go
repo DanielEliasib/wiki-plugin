@@ -13,8 +13,10 @@ import (
 	"wiki_skill/internal/vault"
 )
 
-// mapCharBudget caps the Session map at about 750 tokens (4 characters each).
-const mapCharBudget = 750 * 4
+// mapNotesBudget caps the Session map's list of notes at about 750 tokens (4 characters each). The folder list is
+// not counted: it holds every folder, each gist already cut to maxGistChars, and on a vault with dozens of folders it
+// alone is larger than this, which left no room for any note (and for pinned notes, which are meant to always appear).
+const mapNotesBudget = 750 * 4
 
 // Weights of the relevance score that picks the Session map's notes:
 //
@@ -94,7 +96,7 @@ func countBacklinks(root string) (map[string]int, error) {
 
 // Map builds the Session map: a nudge line, every Project, Area and Resource
 // with its gist and note count, then pinned notes followed by the highest
-// scoring notes, within the token budget. It reads the vault live and never
+// scoring notes, within the notes budget. It reads the vault live and never
 // writes. now is passed in so the recency decay is testable.
 func Map(root, cwd string, now time.Time) (string, error) {
 	backlinks, err := countBacklinks(root)
@@ -180,11 +182,11 @@ func Map(root, cwd string, now time.Time) (string, error) {
 
 	if len(notes) > 0 {
 		heading := "\nNotes:\n"
-		used := out.Len() + len(heading)
+		used := len(heading)
 		var lines []string
 		for _, n := range notes {
 			line := fmt.Sprintf("- %s [%s]\n", n.Title, n.Path)
-			if used+len(line) > mapCharBudget {
+			if used+len(line) > mapNotesBudget {
 				break
 			}
 			used += len(line)

@@ -13,7 +13,7 @@ One markdown file in the vault, atomic (one fact, decision, event, or recipe) or
 _Avoid_: page, entry, document
 
 **Session map**:
-The block of at most about 750 tokens shown to the agent once, at session start. It lists every Project, Area and Resource folder and a relevant subset of notes, so the agent knows what the vault holds.
+The block shown to the agent once, at session start. It lists every Project, Area and Resource folder with its gist, and a relevant subset of notes in a list of at most about 750 tokens (pinned ones first), so the agent knows what the vault holds.
 _Avoid_: index, summary, context dump
 
 **Nudge**:
