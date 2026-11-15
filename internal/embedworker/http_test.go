@@ -70,14 +70,6 @@ func TestHTTPEmbedderTruncatesTooLong(t *testing.T) {
 	}
 }
 
-func TestResolveURLEnv(t *testing.T) {
-	t.Setenv("WIKI_CONFIG", t.TempDir()+"/none.yaml")
-	t.Setenv("WIKI_EMBED_URL", "http://example/v1/embeddings")
-	if url, _, err := ResolveURL(); err != nil || url != "http://example/v1/embeddings" {
-		t.Fatalf("ResolveURL = %q, %v", url, err)
-	}
-}
-
 func TestUnreachableIsDetected(t *testing.T) {
 	_, err := NewHTTPEmbedder("http://127.0.0.1:1/v1/embeddings", "")([]string{"x"})
 	if err == nil || !isUnreachable(err) {

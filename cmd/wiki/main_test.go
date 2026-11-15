@@ -241,3 +241,31 @@ func TestInstallAbortsWithoutConfirmation(t *testing.T) {
 		t.Fatal("want error for a directory that is not a checkout")
 	}
 }
+
+func TestMapAndInstallRejectJSON(t *testing.T) {
+	for _, args := range [][]string{{"map", "--json", "--vault", t.TempDir()}, {"install", "--json", "--dry-run"}} {
+		_, stderr, err := runCmd(t, args...)
+		if err == nil || !strings.Contains(stderr, "--json") {
+			t.Errorf("%v: err %v, stderr %q: want a refusal that names --json", args, err, stderr)
+		}
+	}
+}
+
+func TestABrokenConfigFileIsReportedNotIgnored(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(cfg, []byte("vault: [unclosed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WIKI_CONFIG", cfg)
+	_, stderr, err := runCmd(t, "index", "--vault", t.TempDir())
+	if err == nil || !strings.Contains(stderr, "config.yaml") {
+		t.Errorf("err %v, stderr %q", err, stderr)
+	}
+}
+
+func TestSearchHelpDescribesTopKAsAllResults(t *testing.T) {
+	stdout, _, _ := runCmd(t, "search", "--help")
+	if strings.Contains(stdout, "max semantic results") {
+		t.Errorf("stale --top-k help:\n%s", stdout)
+	}
+}

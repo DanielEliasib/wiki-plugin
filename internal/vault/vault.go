@@ -10,8 +10,6 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
-
-	"wiki_skill/internal/config"
 )
 
 type Note struct {
@@ -27,38 +25,6 @@ func (n Note) Title() string {
 }
 
 var frontmatterRe = regexp.MustCompile(`(?s)^---\n(.*?\n)---\n(.*)$`)
-
-func expandHome(p string) (string, error) {
-	if strings.HasPrefix(p, "~") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(home, strings.TrimPrefix(p, "~")), nil
-	}
-	return p, nil
-}
-
-func ResolveVaultRoot(flagValue string) (string, error) {
-	if flagValue != "" {
-		return expandHome(flagValue)
-	}
-	if env := os.Getenv("WIKI_ROOT"); env != "" {
-		return expandHome(env)
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return "", err
-	}
-	if cfg.Vault != "" {
-		return expandHome(cfg.Vault)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, "notes", "wiki"), nil
-}
 
 func ParseFrontmatter(text string) (map[string]interface{}, string, error) {
 	match := frontmatterRe.FindStringSubmatch(text)

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -57,4 +58,84 @@ func Load() (Config, error) {
 		return cfg, fmt.Errorf("%s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// Settings is every setting, resolved once: flag over environment variable over the config file over the default.
+//
+//	setting          flag      environment             config file       default
+//	Vault            --vault   WIKI_ROOT               vault             ~/notes/wiki
+//	EmbedURL                   WIKI_EMBED_URL          embed_url         (none: the local worker)
+//	EmbedModel                                         embed_model       (none)
+//	EmbedWorkerDir             WIKI_EMBED_WORKER_DIR   embed_worker_dir  ../embed_worker next to the executable
+//	EmbedDevice                WIKI_EMBED_DEVICE       embed_device      cpu
+type Settings struct {
+	Vault          string
+	EmbedURL       string
+	EmbedModel     string
+	EmbedWorkerDir string // "" when none is set or found
+	EmbedDevice    string // not validated here: only the embedder needs it to be cpu or gpu
+}
+
+// Resolve reads the config file once and applies the precedence above. vaultFlag is the --vault value.
+func Resolve(vaultFlag string) (Settings, error) {
+	cfg, err := Load()
+	if err != nil {
+		return Settings{}, err
+	}
+	s := Settings{
+		Vault:          first(vaultFlag, os.Getenv("WIKI_ROOT"), cfg.Vault),
+		EmbedURL:       first(os.Getenv("WIKI_EMBED_URL"), cfg.EmbedURL),
+		EmbedModel:     cfg.EmbedModel,
+		EmbedWorkerDir: first(os.Getenv("WIKI_EMBED_WORKER_DIR"), cfg.EmbedWorkerDir),
+		EmbedDevice:    first(os.Getenv("WIKI_EMBED_DEVICE"), cfg.EmbedDevice, "cpu"),
+	}
+	if s.Vault == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return Settings{}, err
+		}
+		s.Vault = filepath.Join(home, "notes", "wiki")
+	} else if s.Vault, err = expandHome(s.Vault); err != nil {
+		return Settings{}, err
+	}
+	if s.EmbedWorkerDir == "" {
+		s.EmbedWorkerDir = workerDirNextToExecutable()
+	}
+	return s, nil
+}
+
+func first(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func expandHome(p string) (string, error) {
+	if !strings.HasPrefix(p, "~") {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, strings.TrimPrefix(p, "~")), nil
+}
+
+// workerDirNextToExecutable finds ../embed_worker next to the executable (a `make build` checkout).
+func workerDirNextToExecutable() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if exe, err = filepath.EvalSymlinks(exe); err != nil {
+		return ""
+	}
+	dir := filepath.Join(filepath.Dir(exe), "..", "embed_worker")
+	if _, err := os.Stat(filepath.Join(dir, "embed_worker.py")); err != nil {
+		return ""
+	}
+	return filepath.Clean(dir)
 }

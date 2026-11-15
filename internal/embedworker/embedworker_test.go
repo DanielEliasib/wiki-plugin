@@ -3,7 +3,10 @@ package embedworker
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"wiki_skill/internal/config"
 )
 
 func writeFakeWorker(t *testing.T) string {
@@ -57,12 +60,9 @@ func TestNewEmbedderReturnsVectorsFromFakeWorker(t *testing.T) {
 	}
 }
 
-func TestDefaultEmbedderHonorsEnvVar(t *testing.T) {
+func TestFromSettingsUsesTheWorker(t *testing.T) {
 	dir := writeFakeWorker(t)
-	t.Setenv("WIKI_EMBED_WORKER_DIR", dir)
-
-	embed := DefaultEmbedder()
-	vectors, err := embed([]string{"hi"})
+	vectors, err := FromSettings(config.Settings{EmbedWorkerDir: dir, EmbedDevice: "cpu"})([]string{"hi"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,50 +71,15 @@ func TestDefaultEmbedderHonorsEnvVar(t *testing.T) {
 	}
 }
 
-func TestDefaultEmbedderReadsConfigFile(t *testing.T) {
-	dir := writeFakeWorker(t)
-	t.Setenv("WIKI_EMBED_WORKER_DIR", "")
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(cfgPath, []byte("embed_worker_dir: "+dir+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("WIKI_CONFIG", cfgPath)
-	got, err := ResolveWorkerDir()
-	if err != nil || got != dir {
-		t.Errorf("got %q, %v; want %q", got, err, dir)
-	}
-}
-
-func TestDefaultEmbedderErrorsWhenUnconfigured(t *testing.T) {
-	t.Setenv("WIKI_EMBED_WORKER_DIR", "")
-	t.Setenv("WIKI_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
-	if _, err := DefaultEmbedder()([]string{"hi"}); err == nil {
+func TestFromSettingsErrorsWhenNoWorkerIsSet(t *testing.T) {
+	if _, err := FromSettings(config.Settings{EmbedDevice: "cpu"})([]string{"hi"}); err == nil {
 		t.Fatal("want error when no worker dir is configured")
 	}
 }
 
-func TestResolveDevice(t *testing.T) {
-	t.Setenv("WIKI_CONFIG", filepath.Join(t.TempDir(), "none.yaml"))
-	t.Setenv("WIKI_EMBED_DEVICE", "")
-	if got, err := ResolveDevice(); err != nil || got != "cpu" {
-		t.Errorf("default: got %q, %v; want cpu", got, err)
-	}
-	t.Setenv("WIKI_EMBED_DEVICE", "gpu")
-	if got, err := ResolveDevice(); err != nil || got != "gpu" {
-		t.Errorf("env: got %q, %v; want gpu", got, err)
-	}
-	t.Setenv("WIKI_EMBED_DEVICE", "tpu")
-	if _, err := ResolveDevice(); err == nil {
-		t.Error("want error for an unknown device")
-	}
-
-	t.Setenv("WIKI_EMBED_DEVICE", "")
-	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
-	if err := os.WriteFile(cfgPath, []byte("embed_device: gpu\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("WIKI_CONFIG", cfgPath)
-	if got, err := ResolveDevice(); err != nil || got != "gpu" {
-		t.Errorf("config: got %q, %v; want gpu", got, err)
+func TestFromSettingsRejectsAnUnknownDeviceOnUse(t *testing.T) {
+	embed := FromSettings(config.Settings{EmbedWorkerDir: writeFakeWorker(t), EmbedDevice: "tpu"})
+	if _, err := embed([]string{"hi"}); err == nil || !strings.Contains(err.Error(), "cpu or gpu") {
+		t.Errorf("got %v", err)
 	}
 }

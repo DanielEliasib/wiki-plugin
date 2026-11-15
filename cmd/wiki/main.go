@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,7 +13,6 @@ import (
 	"wiki_skill/internal/embedworker"
 	"wiki_skill/internal/install"
 	"wiki_skill/internal/render"
-	"wiki_skill/internal/vault"
 	"wiki_skill/internal/wikicmd"
 )
 
@@ -42,11 +39,29 @@ func newRootCmd() *cobra.Command {
 		newPruneCmd(&vaultFlag, &jsonFlag),
 		newWatchCmd(&vaultFlag, &jsonFlag),
 		newIndexCmd(&vaultFlag, &jsonFlag),
-		newMapCmd(&vaultFlag),
+		newMapCmd(&vaultFlag, &jsonFlag),
 		newInitCmd(&vaultFlag, &jsonFlag),
-		newInstallCmd(),
+		newInstallCmd(&jsonFlag),
 	)
 	return root
+}
+
+// resolveSettings resolves every setting once; a failure is printed the way the command prints errors.
+func resolveSettings(cmd *cobra.Command, vaultFlag string, jsonFlag bool) (config.Settings, error) {
+	settings, err := config.Resolve(vaultFlag)
+	if err != nil {
+		render.Error(errWriter(cmd, jsonFlag), jsonFlag, err)
+	}
+	return settings, err
+}
+
+// rejectJSON is for the commands that have no JSON output of their own: --json is a root flag, so it is accepted
+// everywhere, and a command that ignored it would look as if it had obeyed.
+func rejectJSON(jsonFlag bool, command string) error {
+	if jsonFlag {
+		return fmt.Errorf("wiki %s has no --json output", command)
+	}
+	return nil
 }
 
 func errWriter(cmd *cobra.Command, jsonFlag bool) io.Writer {
@@ -65,12 +80,12 @@ func newSearchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := vault.ResolveVaultRoot(*vaultFlag)
+			settings, err := resolveSettings(cmd, *vaultFlag, *jsonFlag)
 			if err != nil {
-				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
 			}
-			report, err := wikicmd.Search(root, args[0], embedworker.DefaultEmbedder(), topK)
+			root := settings.Vault
+			report, err := wikicmd.Search(root, args[0], embedworker.FromSettings(settings), topK)
 			if err != nil {
 				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
@@ -78,7 +93,7 @@ func newSearchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 			return render.Search(cmd.OutOrStdout(), *jsonFlag, report)
 		},
 	}
-	cmd.Flags().IntVar(&topK, "top-k", 10, "max semantic results")
+	cmd.Flags().IntVar(&topK, "top-k", 10, "max results")
 	return cmd
 }
 
@@ -90,12 +105,12 @@ func newReindexCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := vault.ResolveVaultRoot(*vaultFlag)
+			settings, err := resolveSettings(cmd, *vaultFlag, *jsonFlag)
 			if err != nil {
-				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
 			}
-			report, err := wikicmd.Reindex(root, embedworker.DefaultEmbedder(), full)
+			root := settings.Vault
+			report, err := wikicmd.Reindex(root, embedworker.FromSettings(settings), full)
 			if err != nil {
 				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
@@ -114,11 +129,11 @@ func newPruneCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := vault.ResolveVaultRoot(*vaultFlag)
+			settings, err := resolveSettings(cmd, *vaultFlag, *jsonFlag)
 			if err != nil {
-				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
 			}
+			root := settings.Vault
 			report, err := wikicmd.Prune(root, 0.92, 180)
 			if err != nil {
 				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
@@ -136,11 +151,11 @@ func newWatchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := vault.ResolveVaultRoot(*vaultFlag)
+			settings, err := resolveSettings(cmd, *vaultFlag, *jsonFlag)
 			if err != nil {
-				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
 			}
+			root := settings.Vault
 
 			out := cmd.OutOrStdout()
 			if *jsonFlag {
@@ -161,7 +176,7 @@ func newWatchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 				fmt.Fprintf(out, "updated %d notes, removed %d\n", len(upserted), len(removed))
 			}
 
-			if err := wikicmd.RunWatch(root, embedworker.DefaultEmbedder(), 1500*time.Millisecond, cmd.ErrOrStderr(), onBatch); err != nil {
+			if err := wikicmd.RunWatch(root, embedworker.FromSettings(settings), 1500*time.Millisecond, cmd.ErrOrStderr(), onBatch); err != nil {
 				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
 			}
@@ -178,11 +193,11 @@ func newIndexCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := vault.ResolveVaultRoot(*vaultFlag)
+			settings, err := resolveSettings(cmd, *vaultFlag, *jsonFlag)
 			if err != nil {
-				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
 			}
+			root := settings.Vault
 			name := ""
 			if len(args) == 1 {
 				name = args[0]
@@ -205,11 +220,11 @@ func newInitCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := vault.ResolveVaultRoot(*vaultFlag)
+			settings, err := resolveSettings(cmd, *vaultFlag, *jsonFlag)
 			if err != nil {
-				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
 			}
+			root := settings.Vault
 			report, err := wikicmd.Init(root)
 			if err != nil {
 				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
@@ -220,7 +235,7 @@ func newInitCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 	}
 }
 
-func newInstallCmd() *cobra.Command {
+func newInstallCmd(jsonFlag *bool) *cobra.Command {
 	var repoFlag string
 	var yes, dryRun bool
 	cmd := &cobra.Command{
@@ -234,7 +249,10 @@ func newInstallCmd() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := runInstall(cmd, repoFlag, yes, dryRun)
+			err := rejectJSON(*jsonFlag, "install")
+			if err == nil {
+				err = install.Run(install.RunOptions{Repo: repoFlag, Yes: yes, DryRun: dryRun, In: cmd.InOrStdin(), Out: cmd.OutOrStdout()})
+			}
 			if err != nil {
 				render.Error(cmd.ErrOrStderr(), false, err)
 			}
@@ -247,81 +265,12 @@ func newInstallCmd() *cobra.Command {
 	return cmd
 }
 
-func runInstall(cmd *cobra.Command, repoFlag string, yes, dryRun bool) error {
-	if repoFlag == "" {
-		repoFlag = "."
-	}
-	repo, err := install.FindRepo(repoFlag)
-	if err != nil {
-		return err
-	}
-	claudeDir, err := install.DefaultClaudeDir()
-	if err != nil {
-		return err
-	}
-	configPath, err := config.Path()
-	if err != nil {
-		return err
-	}
-	plan, err := install.MakePlan(install.Options{RepoDir: repo, ClaudeDir: claudeDir, ConfigPath: configPath})
-	if err != nil {
-		return err
-	}
-
-	out := cmd.OutOrStdout()
-	for _, note := range plan.Notes {
-		fmt.Fprintf(out, "ok: %s\n", note)
-	}
-	for _, w := range installWarnings() {
-		fmt.Fprintf(out, "warning: %s\n", w)
-	}
-	if len(plan.Steps) == 0 {
-		fmt.Fprintln(out, "Nothing to do.")
-		return nil
-	}
-	fmt.Fprintln(out, "Will:")
-	for _, s := range plan.Steps {
-		fmt.Fprintf(out, "  - %s: %s\n", s.Name, s.Detail)
-	}
-	if dryRun {
-		return nil
-	}
-	if !yes {
-		fmt.Fprint(out, "Continue? [y/N] ")
-		var answer string
-		fmt.Fscanln(cmd.InOrStdin(), &answer)
-		if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
-			return fmt.Errorf("aborted, nothing changed")
-		}
-	}
-	for _, s := range plan.Steps {
-		if err := s.Apply(); err != nil {
-			return fmt.Errorf("%s: %w", s.Name, err)
-		}
-		fmt.Fprintf(out, "done: %s\n", s.Name)
-	}
-	fmt.Fprintln(out, "Next: `wiki init` to create a vault (or point vault: at an existing one), then `wiki reindex`. Restart Claude Code to load the skill and hook.")
-	return nil
-}
-
-// installWarnings lists missing prerequisites; none of them stop the install.
-func installWarnings() []string {
-	var w []string
-	if _, err := exec.LookPath("uv"); err != nil {
-		w = append(w, "uv is not on PATH; semantic search needs it (https://docs.astral.sh/uv/)")
-	}
-	if _, err := exec.LookPath("wiki"); err != nil {
-		w = append(w, "wiki is not on PATH; the SessionStart hook runs `wiki`, so run `make install` and add $(go env GOPATH)/bin to PATH")
-	}
-	return w
-}
-
 // hookInput is the part of the SessionStart hook's stdin JSON that wiki map uses.
 type hookInput struct {
 	Cwd string `json:"cwd"`
 }
 
-func newMapCmd(vaultFlag *string) *cobra.Command {
+func newMapCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 	var hook bool
 	var cwdFlag string
 	cmd := &cobra.Command{
@@ -334,14 +283,19 @@ func newMapCmd(vaultFlag *string) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := rejectJSON(*jsonFlag, "map"); err != nil {
+				render.Error(cmd.ErrOrStderr(), false, err)
+				return err
+			}
 			if hook {
 				return runMapHook(cmd, *vaultFlag)
 			}
-			root, err := vault.ResolveVaultRoot(*vaultFlag)
+			settings, err := config.Resolve(*vaultFlag)
 			if err != nil {
 				render.Error(cmd.ErrOrStderr(), false, err)
 				return err
 			}
+			root := settings.Vault
 			cwd := cwdFlag
 			if cwd == "" {
 				if cwd, err = os.Getwd(); err != nil {
@@ -369,11 +323,11 @@ func runMapHook(cmd *cobra.Command, vaultFlag string) error {
 	if err := json.NewDecoder(cmd.InOrStdin()).Decode(&in); err != nil {
 		return nil
 	}
-	root, err := vault.ResolveVaultRoot(vaultFlag)
+	settings, err := config.Resolve(vaultFlag)
 	if err != nil {
 		return nil
 	}
-	out, err := wikicmd.Map(root, in.Cwd, time.Now())
+	out, err := wikicmd.Map(settings.Vault, in.Cwd, time.Now())
 	if err != nil {
 		return nil
 	}

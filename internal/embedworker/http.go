@@ -7,13 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
 	"time"
-
-	"wiki_skill/internal/config"
 )
 
 // httpBatch is how many texts go into one embeddings request.
@@ -154,17 +151,3 @@ type unreachableError struct{ err error }
 
 func (e *unreachableError) Error() string { return "embeddings request failed: " + e.err.Error() }
 func (e *unreachableError) Unwrap() error { return e.err }
-
-// ResolveURL returns the embeddings endpoint: $WIKI_EMBED_URL, then embed_url
-// in the config file, else "" (use the local worker).
-func ResolveURL() (url, model string, err error) {
-	cfg, err := config.Load()
-	if err != nil {
-		return "", "", err
-	}
-	url = cfg.EmbedURL
-	if env := os.Getenv("WIKI_EMBED_URL"); env != "" {
-		url = env
-	}
-	return url, cfg.EmbedModel, nil
-}

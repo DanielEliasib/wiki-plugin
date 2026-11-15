@@ -83,65 +83,15 @@ func cudaLibraryPath(workerDir string) string {
 	return strings.Join(libDirs, string(os.PathListSeparator))
 }
 
-// ResolveWorkerDir finds the embed worker directory: $WIKI_EMBED_WORKER_DIR,
-// then embed_worker_dir in the config file, then ../embed_worker next to the
-// executable (a `make build` checkout).
-func ResolveWorkerDir() (string, error) {
-	if dir := os.Getenv("WIKI_EMBED_WORKER_DIR"); dir != "" {
-		return dir, nil
-	}
-	cfg, err := config.Load()
-	if err != nil {
-		return "", err
-	}
-	if cfg.EmbedWorkerDir != "" {
-		return cfg.EmbedWorkerDir, nil
-	}
-	if exe, err := os.Executable(); err == nil {
-		if exe, err = filepath.EvalSymlinks(exe); err == nil {
-			dir := filepath.Join(filepath.Dir(exe), "..", "embed_worker")
-			if _, err := os.Stat(filepath.Join(dir, "embed_worker.py")); err == nil {
-				return filepath.Clean(dir), nil
-			}
-		}
-	}
-	return "", errors.New("embed worker directory not set: set WIKI_EMBED_WORKER_DIR or embed_worker_dir in the config file")
-}
-
-// ResolveDevice returns the embedding device: $WIKI_EMBED_DEVICE, then
-// embed_device in the config file, else "cpu".
-func ResolveDevice() (string, error) {
-	device := os.Getenv("WIKI_EMBED_DEVICE")
-	if device == "" {
-		cfg, err := config.Load()
-		if err != nil {
-			return "", err
-		}
-		device = cfg.EmbedDevice
-	}
-	switch device {
-	case "":
-		return "cpu", nil
-	case "cpu", "gpu":
-		return device, nil
-	}
-	return "", fmt.Errorf("embed_device must be cpu or gpu, got %q", device)
-}
-
-// DefaultEmbedder embeds via the endpoint from ResolveURL when one is set,
-// else via the worker found by ResolveWorkerDir on the device from
-// ResolveDevice. If those cannot be resolved, the returned Embedder reports
-// that on every call.
-func DefaultEmbedder() Embedder {
-	url, model, err := ResolveURL()
-	if err != nil {
-		return func([]string) ([][]float64, error) { return nil, err }
-	}
-	local := localEmbedder()
-	if url == "" {
+// FromSettings embeds via the endpoint in the settings when one is set, else via the local worker in the settings'
+// worker directory on its device. If the settings cannot be used (no worker directory, an unknown device), the
+// returned Embedder reports that on every call, so commands that never embed are not stopped by it.
+func FromSettings(s config.Settings) Embedder {
+	local := localEmbedder(s)
+	if s.EmbedURL == "" {
 		return local
 	}
-	remote := NewHTTPEmbedder(url, model)
+	remote := NewHTTPEmbedder(s.EmbedURL, s.EmbedModel)
 	// The endpoint and the local worker run the same model, so when the
 	// endpoint can't be reached the local worker stands in.
 	return func(texts []string) ([][]float64, error) {
@@ -153,13 +103,15 @@ func DefaultEmbedder() Embedder {
 	}
 }
 
-func localEmbedder() Embedder {
-	dir, err := ResolveWorkerDir()
-	if err == nil {
-		var device string
-		if device, err = ResolveDevice(); err == nil {
-			return NewEmbedder(dir, device)
-		}
+func localEmbedder(s config.Settings) Embedder {
+	var err error
+	switch {
+	case s.EmbedWorkerDir == "":
+		err = errors.New("embed worker directory not set: set WIKI_EMBED_WORKER_DIR or embed_worker_dir in the config file")
+	case s.EmbedDevice != "cpu" && s.EmbedDevice != "gpu":
+		err = fmt.Errorf("embed_device must be cpu or gpu, got %q", s.EmbedDevice)
+	default:
+		return NewEmbedder(s.EmbedWorkerDir, s.EmbedDevice)
 	}
 	return func([]string) ([][]float64, error) { return nil, err }
 }
