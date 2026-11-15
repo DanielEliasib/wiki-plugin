@@ -17,10 +17,11 @@ Each `projects|areas|resources` folder holds a generated `_index.md` (links only
 ## Reindexing
 
 ```bash
-wiki reindex
+wiki reindex          # incremental: embeds only changed notes, drops deleted ones
+wiki reindex --full   # rebuild from scratch, e.g. after changing the embedding model
 ```
 
-Rebuilds the semantic search index from scratch, after first regenerating every `_index.md`. **This overwrites every `_index.md`**, so a vault whose hand-written indexes have not yet been renamed to `_overview.md` loses that prose on the first run. Run it after bulk edits or if search looks stale. Notes are embedded in one batched call to the local embedding worker.
+Updates the semantic search index, after first regenerating every `_index.md`. A note is embedded again only when its text changed since it was indexed (the index stores a hash per note), so a run over an unchanged vault embeds nothing. `--full` re-embeds every note and keeps the old index if that fails. **This overwrites every `_index.md`**, so a vault whose hand-written indexes have not yet been renamed to `_overview.md` loses that prose on the first run. Run it after bulk edits or if search looks stale. The notes to embed go in one batched call to the embedding worker.
 
 ## Watching
 

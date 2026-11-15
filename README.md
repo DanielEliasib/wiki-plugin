@@ -125,10 +125,11 @@ the "go update a bunch of notes" chore that motivated this whole design.
   runs (registration snippet in `reference.md`).
 - **Reindex after manual edits:**
   ```bash
-  wiki reindex
+  wiki reindex          # only changed notes are embedded again
+  wiki reindex --full   # rebuild from scratch (after changing the embedding model)
   ```
-  Full rebuild (also regenerates every `_index.md`) — run this after bulk
-  edits, or if the Search index ever looks stale.
+  Also regenerates every `_index.md`. Incremental by default: notes whose
+  text is unchanged keep their embeddings, deleted notes are dropped.
 - **Keep the index live while editing:**
   ```bash
   wiki watch

@@ -47,8 +47,13 @@ type SearchReport struct {
 	SemanticIndexed bool           `json:"semantic_indexed"`
 }
 
+// ReindexReport says how many notes the index holds, how many were (re)embedded and how many were dropped because
+// their file is gone. Full is true for a rebuild from scratch.
 type ReindexReport struct {
 	NotesIndexed int    `json:"notes_indexed"`
+	Embedded     int    `json:"embedded"`
+	Removed      int    `json:"removed"`
+	Full         bool   `json:"full"`
 	DBPath       string `json:"db_path"`
 }
 
@@ -89,7 +94,10 @@ func noteToIndexText(root, path string) (index.NoteText, error) {
 	return index.NoteText{Path: rel, Text: text}, nil
 }
 
-func Reindex(root string, embed embedworker.Embedder) (ReindexReport, error) {
+// Reindex brings the search index up to date with the vault. By default it is incremental: only notes whose text
+// changed since they were indexed are embedded again, and notes whose file is gone are dropped. full rebuilds the
+// whole index from scratch (needed after changing the embedding model), keeping the old index if that fails.
+func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport, error) {
 	dbDir := filepath.Join(root, ".wiki")
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		return ReindexReport{}, err
@@ -124,10 +132,38 @@ func Reindex(root string, embed embedworker.Embedder) (ReindexReport, error) {
 		notes = append(notes, nt)
 	}
 
-	if err := index.RebuildIndex(db, notes, embed); err != nil {
+	report := ReindexReport{NotesIndexed: len(notes), Full: full, DBPath: dbPath}
+	if full {
+		if err := index.RebuildIndex(db, notes, embed); err != nil {
+			return ReindexReport{}, err
+		}
+		report.Embedded = len(notes)
+		return report, nil
+	}
+
+	upserted, err := index.UpsertBatch(db, notes, embed)
+	if err != nil {
 		return ReindexReport{}, err
 	}
-	return ReindexReport{NotesIndexed: len(notes), DBPath: dbPath}, nil
+	report.Embedded = len(upserted)
+	onDisk := make(map[string]bool, len(notes))
+	for _, n := range notes {
+		onDisk[n.Path] = true
+	}
+	indexed, err := index.IndexedPaths(db)
+	if err != nil {
+		return ReindexReport{}, err
+	}
+	for _, p := range indexed {
+		if onDisk[p] {
+			continue
+		}
+		if err := index.RemoveNote(db, p); err != nil {
+			return ReindexReport{}, err
+		}
+		report.Removed++
+	}
+	return report, nil
 }
 
 // ProcessBatch upserts the still-existing paths in changed (hash-filtered,

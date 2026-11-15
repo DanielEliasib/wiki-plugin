@@ -119,8 +119,15 @@ func Reindex(w io.Writer, jsonMode bool, r wikicmd.ReindexReport) error {
 		return encodeJSON(w, r)
 	}
 	s := newStyles(w)
-	fmt.Fprintf(w, "Reindexed %s notes into %s\n",
+	if r.Full {
+		fmt.Fprintf(w, "Rebuilt the index: %s notes embedded into %s\n",
+			s.accent.Render(fmt.Sprintf("%d", r.NotesIndexed)), s.dim.Render(r.DBPath))
+		return nil
+	}
+	fmt.Fprintf(w, "Index up to date: %s notes, %s embedded, %s removed (%s)\n",
 		s.accent.Render(fmt.Sprintf("%d", r.NotesIndexed)),
+		s.accent.Render(fmt.Sprintf("%d", r.Embedded)),
+		s.accent.Render(fmt.Sprintf("%d", r.Removed)),
 		s.dim.Render(r.DBPath),
 	)
 	return nil

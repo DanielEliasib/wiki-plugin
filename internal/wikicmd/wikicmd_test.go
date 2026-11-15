@@ -63,7 +63,7 @@ func makeVault(t *testing.T) string {
 func TestReindexReportsNoteCountAndDBPath(t *testing.T) {
 	root := makeVault(t)
 
-	report, err := Reindex(root, fakeEmbedder)
+	report, err := Reindex(root, fakeEmbedder, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestReindexReportsNoteCountAndDBPath(t *testing.T) {
 
 func TestSearchReportsGrepAndSemanticMatches(t *testing.T) {
 	root := makeVault(t)
-	if _, err := Reindex(root, fakeEmbedder); err != nil {
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +116,7 @@ func TestSearchMergesKeywordAndSemanticResults(t *testing.T) {
 	root := makeVault(t)
 	writeNote(t, root, "projects/demo/speed-bench-2026-03-02.md", "Speed bench", map[string]interface{}{"date": "2026-03-02"},
 		"Intro.\n\n## Speed\nModel X: 12.5 t/s.\n")
-	if _, err := Reindex(root, fakeEmbedder); err != nil {
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
 	}
 	report, err := Search(root, "speed in the speed bench of 2026-03-02 (tokens per second)", fakeEmbedder, 5)
@@ -211,7 +211,7 @@ func TestPruneFlagsStaleProjectFolder(t *testing.T) {
 
 func TestProcessBatchUpsertsChangedAndRemovesDeleted(t *testing.T) {
 	root := makeVault(t)
-	if _, err := Reindex(root, fakeEmbedder); err != nil {
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -255,7 +255,7 @@ func TestProcessBatchUpsertsChangedAndRemovesDeleted(t *testing.T) {
 
 func TestProcessBatchSkipsEmbedderForUnchangedNote(t *testing.T) {
 	root := makeVault(t)
-	if _, err := Reindex(root, fakeEmbedder); err != nil {
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,7 +290,7 @@ func TestProcessBatchSkipsEmbedderForUnchangedNote(t *testing.T) {
 func TestReindexWritesGeneratedVaultIndexAndSkipsItInSearchIndex(t *testing.T) {
 	root := makeVault(t)
 
-	report, err := Reindex(root, fakeEmbedder)
+	report, err := Reindex(root, fakeEmbedder, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestReindexWritesVaultIndexEvenWhenEmbeddingFails(t *testing.T) {
 	root := makeVault(t)
 	failing := func(texts []string) ([][]float64, error) { return nil, errors.New("embed worker down") }
 
-	if _, err := Reindex(root, failing); err == nil {
+	if _, err := Reindex(root, failing, true); err == nil {
 		t.Fatal("expected the embedding failure to surface")
 	}
 	data, err := os.ReadFile(filepath.Join(root, "projects", "demo", "_index.md"))
@@ -331,7 +331,7 @@ func TestReindexWritesVaultIndexEvenWhenEmbeddingFails(t *testing.T) {
 
 func TestProcessBatchRegeneratesAffectedVaultIndexAndIgnoresIndexFiles(t *testing.T) {
 	root := makeVault(t)
-	if _, err := Reindex(root, fakeEmbedder); err != nil {
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", filepath.Join(root, ".wiki", "index.sqlite"))
@@ -586,7 +586,7 @@ func TestPruneStaleFolderIgnoresRegeneratedVaultIndex(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := Reindex(root, fakeEmbedder); err != nil { // writes a fresh _index.md
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil { // writes a fresh _index.md
 		t.Fatal(err)
 	}
 
@@ -720,5 +720,65 @@ func TestMergeKeepsAClearKeywordWinner(t *testing.T) {
 	out := mergeResults(root, "q", keyword.NewIndex(docs), docs, [][]keyword.Hit{kw, kw}, sem, 1)
 	if len(out) != 1 || out[0].Path != "c.md" || out[0].Score != 0.60 {
 		t.Errorf("got %+v", out)
+	}
+}
+
+// countingEmbedder wraps fakeEmbedder and records how many texts it was asked to embed.
+func countingEmbedder(n *int) func([]string) ([][]float64, error) {
+	return func(texts []string) ([][]float64, error) {
+		*n += len(texts)
+		return fakeEmbedder(texts)
+	}
+}
+
+func TestReindexIsIncrementalByDefault(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	report, err := Reindex(root, countingEmbedder(&calls), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 || report.Embedded != 0 || report.Removed != 0 || report.NotesIndexed != 2 {
+		t.Fatalf("unchanged vault: %d texts embedded, report %+v", calls, report)
+	}
+
+	writeNote(t, root, "projects/demo/first-note.md", "First Note", nil, "An edited body.\n")
+	if err := os.Remove(filepath.Join(root, "projects", "demo", "orphan-note.md")); err != nil {
+		t.Fatal(err)
+	}
+	report, err = Reindex(root, countingEmbedder(&calls), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Embedded != 1 || report.Removed != 1 || report.NotesIndexed != 1 || report.Full {
+		t.Fatalf("one edit, one delete: report %+v", report)
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(root, ".wiki", "index.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, found, err := index.HashForPath(db, "projects/demo/orphan-note.md"); err != nil || found {
+		t.Errorf("deleted note still indexed (found=%v, err=%v)", found, err)
+	}
+}
+
+func TestReindexFullReembedsEveryNote(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	report, err := Reindex(root, countingEmbedder(&calls), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Embedded != 2 || !report.Full || calls == 0 {
+		t.Fatalf("full reindex: %d texts embedded, report %+v", calls, report)
 	}
 }

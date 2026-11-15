@@ -380,3 +380,21 @@ func UpsertBatch(db *sql.DB, notes []NoteText, embed embedworker.Embedder) ([]st
 	}
 	return upserted, nil
 }
+
+// IndexedPaths lists the vault-relative paths of every note in the index.
+func IndexedPaths(db *sql.DB) ([]string, error) {
+	rows, err := db.Query("SELECT path FROM notes")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}

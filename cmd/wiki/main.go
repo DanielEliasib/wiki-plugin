@@ -83,9 +83,10 @@ func newSearchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 }
 
 func newReindexCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
-	return &cobra.Command{
+	var full bool
+	cmd := &cobra.Command{
 		Use:           "reindex",
-		Short:         "Rebuild the semantic search index from scratch",
+		Short:         "Update the semantic search index: embed changed notes, drop deleted ones (--full rebuilds it)",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -94,7 +95,7 @@ func newReindexCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
 			}
-			report, err := wikicmd.Reindex(root, embedworker.DefaultEmbedder())
+			report, err := wikicmd.Reindex(root, embedworker.DefaultEmbedder(), full)
 			if err != nil {
 				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
@@ -102,6 +103,8 @@ func newReindexCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 			return render.Reindex(cmd.OutOrStdout(), *jsonFlag, report)
 		},
 	}
+	cmd.Flags().BoolVar(&full, "full", false, "rebuild the whole index from scratch (after changing the embedding model)")
+	return cmd
 }
 
 func newPruneCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
