@@ -9,11 +9,11 @@ The folder of markdown notes (default `~/notes/wiki`, configurable), organised i
 _Avoid_: wiki (that names the tool and skill), notes folder
 
 **Note**:
-One markdown file in the vault, atomic (one fact, decision, event, or recipe) or a topic page.
+One markdown file in the vault, atomic (one fact, decision, event, or recipe) or a topic page. An Overview counts as a Note (it is searched); a generated Vault index and anything in a hidden folder (`.wiki`, `.obsidian`, `.claude`) does not.
 _Avoid_: page, entry, document
 
 **Session map**:
-The block of at most about 750 tokens shown to the agent once, at session start. It lists every Project and a relevant subset of notes, so the agent knows what the vault holds.
+The block of at most about 750 tokens shown to the agent once, at session start. It lists every Project, Area and Resource folder and a relevant subset of notes, so the agent knows what the vault holds.
 _Avoid_: index, summary, context dump
 
 **Nudge**:
