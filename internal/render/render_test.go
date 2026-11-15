@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -72,7 +73,7 @@ func TestReindexJSON(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded != report {
+	if !reflect.DeepEqual(decoded, report) {
 		t.Errorf("got %+v, want %+v", decoded, report)
 	}
 }

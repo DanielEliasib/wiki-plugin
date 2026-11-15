@@ -2,7 +2,6 @@ package wikicmd
 
 import (
 	"bytes"
-	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -49,11 +48,13 @@ type SearchReport struct {
 // ReindexReport says how many notes the index holds, how many were (re)embedded and how many were dropped because
 // their file is gone. Full is true for a rebuild from scratch.
 type ReindexReport struct {
-	NotesIndexed int    `json:"notes_indexed"`
-	Embedded     int    `json:"embedded"`
-	Removed      int    `json:"removed"`
-	Full         bool   `json:"full"`
-	DBPath       string `json:"db_path"`
+	NotesIndexed int  `json:"notes_indexed"`
+	Embedded     int  `json:"embedded"`
+	Removed      int  `json:"removed"`
+	Full         bool `json:"full"`
+	// Failed lists the notes that could not be read (they are left out; the rest was indexed).
+	Failed []string `json:"failed,omitempty"`
+	DBPath string   `json:"db_path"`
 }
 
 type MergeCandidate struct {
@@ -107,88 +108,50 @@ func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport,
 		return ReindexReport{}, err
 	}
 
-	var notes []index.NoteText
-	for _, p := range paths {
-		nt, err := noteToIndexText(root, p)
-		if err != nil {
-			return ReindexReport{}, err
-		}
-		notes = append(notes, nt)
-	}
-
-	report := ReindexReport{NotesIndexed: len(notes), Full: full, DBPath: dbPath}
 	if full {
+		var notes []index.NoteText
+		for _, p := range paths {
+			nt, err := noteToIndexText(root, p)
+			if err != nil {
+				return ReindexReport{}, err
+			}
+			notes = append(notes, nt)
+		}
 		if err := index.RebuildIndex(db, notes, embed); err != nil {
 			return ReindexReport{}, err
 		}
-		report.Embedded = len(notes)
-		return report, nil
+		return ReindexReport{NotesIndexed: len(notes), Embedded: len(notes), Full: true, DBPath: dbPath}, nil
 	}
 
-	upserted, err := index.UpsertBatch(db, notes, embed)
-	if err != nil {
-		return ReindexReport{}, err
-	}
-	report.Embedded = len(upserted)
-	onDisk := make(map[string]bool, len(notes))
-	for _, n := range notes {
-		onDisk[n.Path] = true
+	// Incremental: the same step `wiki watch` takes, for every note on disk and every indexed note whose file is gone
+	// (the vault indexes were just written above).
+	onDisk := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		rel, err := filepath.Rel(root, p)
+		if err != nil {
+			return ReindexReport{}, err
+		}
+		onDisk[rel] = true
 	}
 	indexed, err := index.IndexedPaths(db)
 	if err != nil {
 		return ReindexReport{}, err
 	}
-	for _, p := range indexed {
-		if onDisk[p] {
-			continue
+	var gone []string
+	for _, rel := range indexed {
+		if !onDisk[rel] {
+			gone = append(gone, filepath.Join(root, rel))
 		}
-		if err := index.RemoveNote(db, p); err != nil {
-			return ReindexReport{}, err
-		}
-		report.Removed++
+	}
+	out, err := apply(root, paths, gone, embed, false)
+	if err != nil {
+		return ReindexReport{}, err
+	}
+	report := ReindexReport{NotesIndexed: len(paths) - len(out.Failed), Embedded: len(out.Upserted), Removed: len(out.Removed), DBPath: dbPath}
+	for _, f := range out.Failed {
+		report.Failed = append(report.Failed, fmt.Sprintf("%s: %v", f.Path, f.Err))
 	}
 	return report, nil
-}
-
-// ProcessBatch upserts the still-existing paths in changed (hash-filtered,
-// embedded in one batched call) and removes the paths in deleted. Both
-// slices hold absolute file paths. It returns the vault-relative paths that
-// were actually upserted and removed, for callers that report on activity
-// (e.g. wiki watch --json).
-func ProcessBatch(root string, db *sql.DB, changed, deleted []string, embed embedworker.Embedder) (upserted, removed []string, err error) {
-	changed = onlyNotes(root, changed)
-	deleted = onlyNotes(root, deleted)
-	if err := refreshVaultIndexes(root, changed, deleted); err != nil {
-		return nil, nil, err
-	}
-
-	for _, path := range deleted {
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return nil, nil, relErr
-		}
-		if err := index.RemoveNote(db, rel); err != nil {
-			return nil, nil, err
-		}
-		removed = append(removed, rel)
-	}
-
-	var notes []index.NoteText
-	for _, path := range changed {
-		nt, ntErr := noteToIndexText(root, path)
-		if ntErr != nil {
-			return nil, nil, ntErr
-		}
-		notes = append(notes, nt)
-	}
-	if len(notes) == 0 {
-		return nil, removed, nil
-	}
-	upserted, err = index.UpsertBatch(db, notes, embed)
-	if err != nil {
-		return nil, nil, err
-	}
-	return upserted, removed, nil
 }
 
 // Search ranks notes three ways, by the query's words (BM25 over the notes, file names and titles weighted; BM25 over

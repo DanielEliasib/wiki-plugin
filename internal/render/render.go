@@ -130,6 +130,9 @@ func Reindex(w io.Writer, jsonMode bool, r wikicmd.ReindexReport) error {
 		s.accent.Render(fmt.Sprintf("%d", r.Removed)),
 		s.dim.Render(r.DBPath),
 	)
+	for _, f := range r.Failed {
+		fmt.Fprintf(w, "  could not read %s\n", f)
+	}
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package wikicmd
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -209,7 +210,7 @@ func TestPruneFlagsStaleProjectFolder(t *testing.T) {
 	}
 }
 
-func TestProcessBatchUpsertsChangedAndRemovesDeleted(t *testing.T) {
+func TestApplyUpsertsChangedAndRemovesDeleted(t *testing.T) {
 	root := makeVault(t)
 	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
@@ -231,7 +232,8 @@ func TestProcessBatchUpsertsChangedAndRemovesDeleted(t *testing.T) {
 	}
 	defer db.Close()
 
-	upserted, removed, err := ProcessBatch(root, db, []string{newNotePath}, []string{deletedPath}, fakeEmbedder)
+	out, err := Apply(root, []string{newNotePath}, []string{deletedPath}, fakeEmbedder)
+	upserted, removed := out.Upserted, out.Removed
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +255,7 @@ func TestProcessBatchUpsertsChangedAndRemovesDeleted(t *testing.T) {
 	}
 }
 
-func TestProcessBatchSkipsEmbedderForUnchangedNote(t *testing.T) {
+func TestApplySkipsEmbedderForUnchangedNote(t *testing.T) {
 	root := makeVault(t)
 	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
@@ -272,7 +274,8 @@ func TestProcessBatchSkipsEmbedderForUnchangedNote(t *testing.T) {
 	}
 
 	unchangedPath := filepath.Join(root, "projects", "demo", "first-note.md")
-	upserted, removed, err := ProcessBatch(root, db, []string{unchangedPath}, nil, countingEmbedder)
+	out, err := Apply(root, []string{unchangedPath}, nil, countingEmbedder)
+	upserted, removed := out.Upserted, out.Removed
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +332,7 @@ func TestReindexWritesVaultIndexEvenWhenEmbeddingFails(t *testing.T) {
 	}
 }
 
-func TestProcessBatchRegeneratesAffectedVaultIndexAndIgnoresIndexFiles(t *testing.T) {
+func TestApplyRegeneratesAffectedVaultIndexAndIgnoresIndexFiles(t *testing.T) {
 	root := makeVault(t)
 	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
@@ -351,7 +354,8 @@ func TestProcessBatchRegeneratesAffectedVaultIndexAndIgnoresIndexFiles(t *testin
 	}
 	indexPath := filepath.Join(root, "projects", "demo", "_index.md")
 
-	upserted, _, err := ProcessBatch(root, db, []string{newNotePath, indexPath}, []string{removedPath}, fakeEmbedder)
+	out, err := Apply(root, []string{newNotePath, indexPath}, []string{removedPath}, fakeEmbedder)
+	upserted, _ := out.Upserted, out.Removed
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -783,7 +787,7 @@ func TestReindexFullReembedsEveryNote(t *testing.T) {
 	}
 }
 
-func TestProcessBatchIgnoresPathsThatAreNotNotes(t *testing.T) {
+func TestApplyIgnoresPathsThatAreNotNotes(t *testing.T) {
 	root := makeVault(t)
 	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
@@ -798,11 +802,197 @@ func TestProcessBatchIgnoresPathsThatAreNotNotes(t *testing.T) {
 	if err := vault.WriteNote(hidden, map[string]interface{}{"title": "Copy"}, "A copy of a note.\n"); err != nil {
 		t.Fatal(err)
 	}
-	upserted, removed, err := ProcessBatch(root, db, []string{hidden}, nil, fakeEmbedder)
+	out, err := Apply(root, []string{hidden}, nil, fakeEmbedder)
+	upserted, removed := out.Upserted, out.Removed
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(upserted) != 0 || len(removed) != 0 {
 		t.Errorf("a note in a hidden folder was indexed: upserted %v removed %v", upserted, removed)
+	}
+}
+
+func TestApplyIndexesTheGoodNotesWhenOneCannotBeRead(t *testing.T) {
+	root := makeVault(t)
+	good := filepath.Join(root, "projects", "demo", "good.md")
+	bad := filepath.Join(root, "projects", "demo", "bad.md")
+	if err := vault.WriteNote(good, map[string]interface{}{"title": "Good"}, "A fine note.\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bad, []byte("---\ntitle: [unclosed\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := Apply(root, []string{bad, good}, nil, fakeEmbedder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(out.Upserted, []string{"projects/demo/good.md"}) {
+		t.Errorf("got upserted %v, want the good note", out.Upserted)
+	}
+	if len(out.Failed) != 1 || out.Failed[0].Path != bad || out.Failed[0].Err == nil {
+		t.Errorf("got failed %+v, want the bad note", out.Failed)
+	}
+}
+
+func TestReindexRemovesNotesWhoseFileIsGoneThroughApply(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "projects", "demo", "first-note.md")); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Reindex(root, fakeEmbedder, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Removed != 1 {
+		t.Errorf("got %d removed, want 1", report.Removed)
+	}
+}
+
+func TestReindexDropsNotesIndexedFromHiddenFolders(t *testing.T) {
+	root := makeVault(t)
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	db, err := index.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// what an older watch left behind
+	if err := index.UpsertNote(db, ".claude/worktrees/w/copy.md", "a copy", fakeEmbedder); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	report, err := Reindex(root, fakeEmbedder, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Removed != 1 {
+		t.Errorf("got %d removed, want the stray hidden-folder note", report.Removed)
+	}
+}
+
+func TestPendingSetRetriesWithBackoffThenGivesUp(t *testing.T) {
+	p := newPendingSet()
+	p.Add("a.md", false)
+	p.Add("gone.md", true)
+	changed, deleted := p.Take()
+	if !reflect.DeepEqual(changed, []string{"a.md"}) || !reflect.DeepEqual(deleted, []string{"gone.md"}) {
+		t.Fatalf("got %v %v", changed, deleted)
+	}
+	if !p.Empty() {
+		t.Error("a taken batch should leave the set empty")
+	}
+
+	want := []time.Duration{5 * time.Second, 30 * time.Second, 2 * time.Minute}
+	for i, w := range want {
+		delay, gaveUp := p.Retry([]string{"a.md"})
+		if delay != w || len(gaveUp) != 0 {
+			t.Fatalf("failure %d: delay %v gaveUp %v, want %v", i+1, delay, gaveUp, w)
+		}
+		changed, _ = p.Take()
+		if !reflect.DeepEqual(changed, []string{"a.md"}) {
+			t.Fatalf("retry %d: a.md was not queued again: %v", i+1, changed)
+		}
+	}
+	delay, gaveUp := p.Retry([]string{"a.md"})
+	if delay != 0 || !reflect.DeepEqual(gaveUp, []string{"a.md"}) || !p.Empty() {
+		t.Errorf("4th failure: delay %v gaveUp %v empty %v", delay, gaveUp, p.Empty())
+	}
+}
+
+func TestPendingSetNewEditResetsTheCount(t *testing.T) {
+	p := newPendingSet()
+	p.Add("a.md", false)
+	p.Take()
+	p.Retry([]string{"a.md"})
+	p.Take()
+	p.Retry([]string{"a.md"})
+	p.Take()
+	p.Add("a.md", false) // edited again
+	p.Take()
+	if delay, _ := p.Retry([]string{"a.md"}); delay != 5*time.Second {
+		t.Errorf("got %v, want the first delay again", delay)
+	}
+}
+
+func TestPendingSetSuccessClearsTheCount(t *testing.T) {
+	p := newPendingSet()
+	p.Add("a.md", false)
+	p.Take()
+	p.Retry([]string{"a.md"})
+	p.Take()
+	p.Retry(nil) // the retry worked
+	p.Add("a.md", false)
+	p.Take()
+	if delay, _ := p.Retry([]string{"a.md"}); delay != 5*time.Second {
+		t.Errorf("got %v, want the first delay", delay)
+	}
+}
+
+func TestWatchStepRetriesAFailedBatchAndReportsSuccess(t *testing.T) {
+	p := newPendingSet()
+	p.Add("a.md", false)
+	p.Add("b.md", false)
+	var log bytes.Buffer
+	var reported [][]string
+	calls := 0
+	apply := func(changed, deleted []string) (Outcome, error) {
+		calls++
+		if calls == 1 {
+			return Outcome{Upserted: []string{"b.md"}, Failed: []Failure{{Path: "a.md", Err: errors.New("unreadable")}}}, nil
+		}
+		return Outcome{Upserted: changed}, nil
+	}
+	onBatch := func(upserted, removed []string) { reported = append(reported, upserted) }
+
+	delay := watchStep(p, apply, &log, onBatch)
+	if delay != 5*time.Second {
+		t.Errorf("got delay %v after a failed note", delay)
+	}
+	if !strings.Contains(log.String(), "a.md") || !strings.Contains(log.String(), "unreadable") {
+		t.Errorf("failure not logged: %q", log.String())
+	}
+	if delay = watchStep(p, apply, &log, onBatch); delay != 0 {
+		t.Errorf("got delay %v after success", delay)
+	}
+	if calls != 2 || len(reported) != 2 || !reflect.DeepEqual(reported[1], []string{"a.md"}) {
+		t.Errorf("calls %d reported %v", calls, reported)
+	}
+}
+
+func TestWatchStepRetriesTheWholeBatchWhenTheEmbedderIsDown(t *testing.T) {
+	p := newPendingSet()
+	p.Add("a.md", false)
+	p.Add("gone.md", true)
+	var log bytes.Buffer
+	apply := func(changed, deleted []string) (Outcome, error) { return Outcome{}, errors.New("embed worker down") }
+
+	if delay := watchStep(p, apply, &log, nil); delay != 5*time.Second {
+		t.Errorf("got delay %v", delay)
+	}
+	changed, deleted := p.Take()
+	if !reflect.DeepEqual(changed, []string{"a.md"}) || !reflect.DeepEqual(deleted, []string{"gone.md"}) {
+		t.Errorf("batch not queued again: %v %v", changed, deleted)
+	}
+	if !strings.Contains(log.String(), "embed worker down") {
+		t.Errorf("error not logged: %q", log.String())
+	}
+}
+
+func TestWatchStepGivesUpWithAHintToReindex(t *testing.T) {
+	p := newPendingSet()
+	var log bytes.Buffer
+	apply := func(changed, deleted []string) (Outcome, error) { return Outcome{}, errors.New("nope") }
+	p.Add("a.md", false)
+	for i := 0; i < 4; i++ {
+		watchStep(p, apply, &log, nil)
+	}
+	if !p.Empty() || !strings.Contains(log.String(), "wiki reindex") {
+		t.Errorf("empty %v, log %q", p.Empty(), log.String())
 	}
 }
