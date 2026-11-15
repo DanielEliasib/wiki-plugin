@@ -1089,3 +1089,20 @@ func TestSearchGivesUpOnAHungRipgrep(t *testing.T) {
 		t.Errorf("warning %q, results %d", report.Warning, len(report.Results))
 	}
 }
+
+func TestBacklinksFollowObsidianLinkSyntax(t *testing.T) {
+	root := t.TempDir()
+	writeNote(t, root, "projects/p/target.md", "Target", nil, "x\n")
+	writeNote(t, root, "projects/p/other.md", "Other", nil, "x\n")
+	writeNote(t, root, "projects/p/fenced.md", "Fenced", nil, "x\n")
+	writeNote(t, root, "projects/p/source.md", "Source", nil,
+		"Table: | [[target\\|alias]] | [[Target]] | [[other#heading]] |\n\n```\n[[fenced]] in a code fence is not a link\n```\n"+
+			"~~~\n[[fenced]] nor in this one\n~~~\n")
+	counts, err := countBacklinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["target"] != 2 || counts["other"] != 1 || counts["fenced"] != 0 {
+		t.Errorf("got %v, want target 2 (the alias in a table, the other case), other 1, fenced 0", counts)
+	}
+}

@@ -145,3 +145,27 @@ func TestNoteTitleIsFrontmatterTitle(t *testing.T) {
 		t.Errorf("non-string title should be empty, got %q", got)
 	}
 }
+
+func TestParseFrontmatterAcceptsCRLFAndAnEmptyBlock(t *testing.T) {
+	cases := []struct {
+		name, text, wantTitle, wantBody string
+	}{
+		{"CRLF", "---\r\ntitle: Example\r\n---\r\nBody.\r\n", "Example", "Body.\r\n"},
+		{"empty block", "---\n---\nBody.\n", "", "Body.\n"},
+		{"empty block, CRLF", "---\r\n---\r\nBody.\r\n", "", "Body.\r\n"},
+		{"a later --- line is the body's", "---\n---\nBody.\n---\nmore\n", "", "Body.\n---\nmore\n"},
+		{"no frontmatter", "Just text.\n---\nnot a block\n", "", "Just text.\n---\nnot a block\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			meta, body, err := ParseFrontmatter(c.text)
+			if err != nil {
+				t.Fatal(err)
+			}
+			title, _ := meta["title"].(string)
+			if title != c.wantTitle || body != c.wantBody {
+				t.Errorf("title %q body %q, want %q %q", title, body, c.wantTitle, c.wantBody)
+			}
+		})
+	}
+}

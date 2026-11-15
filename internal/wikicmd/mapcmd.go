@@ -30,6 +30,7 @@ const (
 	maxGistChars    = 110
 )
 
+// backlinkRe finds [[target]], [[target|alias]], [[target#heading]] and the table form [[target\|alias]].
 var backlinkRe = regexp.MustCompile(`\[\[([^\]|#]+)`)
 
 type mapNote struct {
@@ -80,9 +81,9 @@ func countBacklinks(root string) (map[string]int, error) {
 		if err != nil {
 			return nil, err
 		}
-		self := noteStem(p)
-		for _, m := range backlinkRe.FindAllStringSubmatch(string(data), -1) {
-			target := strings.TrimSuffix(filepath.Base(strings.TrimSpace(m[1])), ".md")
+		self := linkKey(noteStem(p))
+		for _, m := range backlinkRe.FindAllStringSubmatch(withoutCodeFences(string(data)), -1) {
+			target := linkKey(strings.TrimSuffix(filepath.Base(strings.TrimRight(strings.TrimSpace(m[1]), `\`)), ".md"))
 			if target != self {
 				counts[target]++
 			}
@@ -146,7 +147,7 @@ func Map(root, cwd string, now time.Time) (string, error) {
 				if err != nil {
 					return "", err
 				}
-				n := mapNote{Path: rel, Title: noteTitle(p), Backlinks: backlinks[noteStem(p)], ModTime: info.ModTime()}
+				n := mapNote{Path: rel, Title: noteTitle(p), Backlinks: backlinks[linkKey(noteStem(p))], ModTime: info.ModTime()}
 				n.Pinned, _ = note.Meta["pinned"].(bool)
 				age := now.Sub(n.ModTime)
 				if age < 0 {
@@ -205,4 +206,29 @@ func truncateRunes(s string, max int) string {
 		return s
 	}
 	return string(r[:max-1]) + "…"
+}
+
+// linkKey is how a link target and a note's file name are compared: Obsidian resolves links without regard to case.
+func linkKey(stem string) string { return strings.ToLower(stem) }
+
+// withoutCodeFences drops fenced code blocks (``` or ~~~): a [[link]] shown as code is not a link.
+func withoutCodeFences(text string) string {
+	var out strings.Builder
+	fence := ""
+	for _, line := range strings.SplitAfter(text, "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		switch {
+		case fence != "":
+			if strings.HasPrefix(trimmed, fence) {
+				fence = ""
+			}
+		case strings.HasPrefix(trimmed, "```"):
+			fence = "```"
+		case strings.HasPrefix(trimmed, "~~~"):
+			fence = "~~~"
+		default:
+			out.WriteString(line)
+		}
+	}
+	return out.String()
 }

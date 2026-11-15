@@ -24,7 +24,9 @@ func (n Note) Title() string {
 	return title
 }
 
-var frontmatterRe = regexp.MustCompile(`(?s)^---\n(.*?\n)---\n(.*)$`)
+// frontmatterRe: a leading --- line, an optional block (lazily: an empty block is allowed), a closing --- line; LF or
+// CRLF line endings.
+var frontmatterRe = regexp.MustCompile(`(?s)^---\r?\n(.*?\r?\n)??---\r?\n(.*)$`)
 
 func ParseFrontmatter(text string) (map[string]interface{}, string, error) {
 	match := frontmatterRe.FindStringSubmatch(text)

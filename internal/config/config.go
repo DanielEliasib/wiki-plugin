@@ -114,7 +114,8 @@ func first(values ...string) string {
 }
 
 func expandHome(p string) (string, error) {
-	if !strings.HasPrefix(p, "~") {
+	// only "~" and "~/...": "~bob" is another user's home, which is not looked up
+	if p != "~" && !strings.HasPrefix(p, "~/") {
 		return p, nil
 	}
 	home, err := os.UserHomeDir()

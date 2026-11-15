@@ -153,3 +153,14 @@ func TestResolveKeepsAnUnknownDeviceForTheEmbedderToReject(t *testing.T) {
 		t.Errorf("got %q, %v: a bad device must not stop commands that never embed", s.EmbedDevice, err)
 	}
 }
+
+func TestResolveExpandsOnlyTheCurrentUsersHome(t *testing.T) {
+	clearEnv(t)
+	home, _ := os.UserHomeDir()
+	for in, want := range map[string]string{"~": home, "~/notes": filepath.Join(home, "notes"), "~bob/notes": "~bob/notes"} {
+		s, err := Resolve(in)
+		if err != nil || s.Vault != want {
+			t.Errorf("Resolve(%q) = %q, %v; want %q", in, s.Vault, err, want)
+		}
+	}
+}
