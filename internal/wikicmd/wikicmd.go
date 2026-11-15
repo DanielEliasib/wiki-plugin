@@ -2,6 +2,8 @@ package wikicmd
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -37,6 +39,67 @@ type SearchReport struct {
 	// Warning is set when the semantic ranking was skipped (the embedder is down, the index does not match the
 	// embedding model): Results are then by keywords alone.
 	Warning string `json:"warning,omitempty"`
+}
+
+func (r *SearchReport) addWarning(w string) {
+	switch {
+	case w == "":
+	case r.Warning == "":
+		r.Warning = w
+	default:
+		r.Warning += "; " + w
+	}
+}
+
+// rgTimeout bounds the exact phrase search: a stuck rg must not hang the search.
+var rgTimeout = 10 * time.Second
+
+// exactMatches finds the query as a literal string (rg, case-insensitive) in the notes: at most 20 lines. The
+// warning says why there are none when rg is missing or too slow.
+func exactMatches(root, query string) ([]GrepMatch, string) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		return nil, "rg (ripgrep) is not on the PATH, so exact phrase matches are left out"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), rgTimeout)
+	defer cancel()
+	// -F: the query is text, not a regex ("(tokens per second)" is not a group). Only notes: no other file types
+	// and not the generated indexes.
+	cmd := exec.CommandContext(ctx, "rg", "--line-number", "--no-heading", "-i", "-F",
+		"--glob", "*.md", "--glob", "!_index.md", "--", query, root)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.WaitDelay = time.Second // a child of rg that keeps the pipe open must not hold us either
+	runErr := cmd.Run()         // rg exits non-zero when there are no matches; that's not an error here
+	var warning string
+	if ctx.Err() != nil {
+		_ = runErr
+		warning = fmt.Sprintf("rg took longer than %s, so exact phrase matches are left out", rgTimeout)
+		return nil, warning
+	}
+
+	var matches []GrepMatch
+	for _, line := range strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		lineNum, convErr := strconv.Atoi(parts[1])
+		if convErr != nil {
+			continue
+		}
+		file := parts[0]
+		if rel, relErr := filepath.Rel(root, file); relErr == nil {
+			file = rel
+		}
+		matches = append(matches, GrepMatch{File: file, Line: lineNum, Text: parts[2]})
+	}
+	if len(matches) > 20 {
+		matches = matches[:20]
+	}
+	return matches, ""
 }
 
 // ReindexReport says how many notes the index holds, how many were (re)embedded and how many were dropped because
@@ -155,33 +218,12 @@ func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport,
 func Search(root, query string, embed embedworker.Embedder, topK int) (SearchReport, error) {
 	report := SearchReport{Query: query}
 
-	// -F: the query is text, not a regex ("(tokens per second)" is not a group)
-	cmd := exec.Command("rg", "--line-number", "--no-heading", "-i", "-F", "--", query, root)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	_ = cmd.Run() // rg exits non-zero when there are no matches; that's not an error here
-
-	for _, line := range strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n") {
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, ":", 3)
-		if len(parts) != 3 {
-			continue
-		}
-		lineNum, convErr := strconv.Atoi(parts[1])
-		if convErr != nil {
-			continue
-		}
-		file := parts[0]
-		if rel, relErr := filepath.Rel(root, file); relErr == nil {
-			file = rel
-		}
-		report.GrepMatches = append(report.GrepMatches, GrepMatch{File: file, Line: lineNum, Text: parts[2]})
+	if strings.TrimSpace(query) == "" {
+		return SearchReport{}, errors.New("the query is empty")
 	}
-	if len(report.GrepMatches) > 20 {
-		report.GrepMatches = report.GrepMatches[:20]
-	}
+	var warning string
+	report.GrepMatches, warning = exactMatches(root, query)
+	report.addWarning(warning)
 
 	notes, err := searchNotes(root)
 	if err != nil {
@@ -192,7 +234,7 @@ func Search(root, query string, embed embedworker.Embedder, topK int) (SearchRep
 		report.SemanticIndexed = true
 		matches, err := semanticMatches(root, query, embed, len(notes)+1) // every note: each candidate gets a similarity
 		if err != nil {
-			report.Warning = fmt.Sprintf("semantic ranking skipped, results are by keywords only: %v", err)
+			report.addWarning(fmt.Sprintf("semantic ranking skipped, results are by keywords only: %v", err))
 		}
 		report.SemanticMatches = matches
 	}

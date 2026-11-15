@@ -1023,3 +1023,69 @@ func TestSearchHasNoWarningWhenAllIsWell(t *testing.T) {
 		t.Errorf("err %v, warning %q", err, report.Warning)
 	}
 }
+
+func TestSearchRejectsAnEmptyQuery(t *testing.T) {
+	root := makeVault(t)
+	for _, q := range []string{"", "   "} {
+		if _, err := Search(root, q, fakeEmbedder, 5); err == nil {
+			t.Errorf("query %q: want an error, not every line of the vault", q)
+		}
+	}
+}
+
+func TestExactPhraseMatchesOnlyCoverNotes(t *testing.T) {
+	root := makeVault(t)
+	if err := os.WriteFile(filepath.Join(root, "projects", "demo", "scratch.txt"), []byte("needle in a text file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeNote(t, root, "projects/demo/real.md", "Real", nil, "needle in a note\n")
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil { // writes _index.md, which lists note titles
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "projects", "demo", "_index.md"), []byte("needle in a generated index\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Search(root, "needle", fakeEmbedder, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.GrepMatches) != 1 || report.GrepMatches[0].File != "projects/demo/real.md" {
+		t.Errorf("got %+v, want only the note", report.GrepMatches)
+	}
+}
+
+func TestSearchWarnsWhenRipgrepIsMissing(t *testing.T) {
+	root := makeVault(t)
+	t.Setenv("PATH", t.TempDir())
+	report, err := Search(root, "orphan", fakeEmbedder, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(report.Warning, "rg") || len(report.Results) != 1 {
+		t.Errorf("warning %q, results %d", report.Warning, len(report.Results))
+	}
+}
+
+func TestSearchGivesUpOnAHungRipgrep(t *testing.T) {
+	root := makeVault(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "rg"), []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	old := rgTimeout
+	rgTimeout = 200 * time.Millisecond
+	defer func() { rgTimeout = old }()
+
+	start := time.Now()
+	report, err := Search(root, "orphan", fakeEmbedder, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Error("the search waited for the hung rg")
+	}
+	if !strings.Contains(report.Warning, "rg") || len(report.Results) != 1 {
+		t.Errorf("warning %q, results %d", report.Warning, len(report.Results))
+	}
+}
