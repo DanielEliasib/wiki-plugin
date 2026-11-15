@@ -2,6 +2,7 @@ package embedworker
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"wiki_skill/internal/config"
 )
@@ -23,6 +25,10 @@ type response struct {
 	Vectors [][]float64 `json:"vectors"`
 }
 
+// workerTimeout bounds one call to the worker. The first call downloads the model, which takes minutes on a slow
+// connection, so this is generous; a hung uv must not hang search and watch forever.
+var workerTimeout = 10 * time.Minute
+
 // NewEmbedder runs the worker in workerDir on the given device ("cpu" or "gpu").
 func NewEmbedder(workerDir, device string) Embedder {
 	return func(texts []string) ([][]float64, error) {
@@ -33,7 +39,9 @@ func NewEmbedder(workerDir, device string) Embedder {
 
 		// --exact keeps the venv to the chosen extra, so switching between cpu
 		// and gpu never leaves both fastembed packages installed.
-		cmd := exec.Command("uv", "run", "--exact", "--extra", device, "--project", workerDir, "python", "embed_worker.py")
+		ctx, cancel := context.WithTimeout(context.Background(), workerTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "uv", "run", "--exact", "--extra", device, "--project", workerDir, "python", "embed_worker.py")
 		cmd.Dir = workerDir
 		cmd.Stdin = bytes.NewReader(reqBytes)
 		cmd.Env = append(os.Environ(), "WIKI_EMBED_DEVICE="+device)
@@ -46,8 +54,12 @@ func NewEmbedder(workerDir, device string) Embedder {
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
+		cmd.WaitDelay = 2 * time.Second // children of uv that keep the pipes open must not hold us either
 
 		if err := cmd.Run(); err != nil {
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("embed worker timed out after %s", workerTimeout)
+			}
 			return nil, fmt.Errorf("embed worker failed: %w: %s", err, stderr.String())
 		}
 
@@ -97,7 +109,11 @@ func FromSettings(s config.Settings) Embedder {
 	return func(texts []string) ([][]float64, error) {
 		vecs, err := remote(texts)
 		if err != nil && isUnreachable(err) {
-			return local(texts)
+			vecs, localErr := local(texts)
+			if localErr != nil {
+				return nil, fmt.Errorf("%w (the local worker could not stand in: %v)", err, localErr)
+			}
+			return vecs, nil
 		}
 		return vecs, err
 	}

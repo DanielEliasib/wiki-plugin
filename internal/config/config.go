@@ -21,7 +21,8 @@ type Config struct {
 	// EmbedDevice is "cpu" (default) or "gpu" (NVIDIA CUDA 12).
 	EmbedDevice string `yaml:"embed_device"`
 	// EmbedURL, when set, is an OpenAI-compatible /v1/embeddings endpoint used
-	// instead of the local worker (embed_device is then ignored).
+	// instead of the local worker; embed_device and embed_worker_dir then only matter for the local worker that
+	// stands in when the endpoint cannot be reached.
 	EmbedURL string `yaml:"embed_url"`
 	// EmbedModel is the optional "model" field sent to EmbedURL.
 	EmbedModel string `yaml:"embed_model"`

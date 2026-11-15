@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"wiki_skill/internal/config"
 )
@@ -81,5 +82,30 @@ func TestFromSettingsRejectsAnUnknownDeviceOnUse(t *testing.T) {
 	embed := FromSettings(config.Settings{EmbedWorkerDir: writeFakeWorker(t), EmbedDevice: "tpu"})
 	if _, err := embed([]string{"hi"}); err == nil || !strings.Contains(err.Error(), "cpu or gpu") {
 		t.Errorf("got %v", err)
+	}
+}
+
+func TestUnreachableEndpointErrorSurvivesAFailingFallback(t *testing.T) {
+	embed := FromSettings(config.Settings{EmbedURL: "http://127.0.0.1:1/v1/embeddings", EmbedDevice: "cpu"}) // no worker either
+	_, err := embed([]string{"x"})
+	if err == nil || !strings.Contains(err.Error(), "127.0.0.1:1") || !strings.Contains(err.Error(), "embed worker directory not set") {
+		t.Errorf("got %v, want the endpoint's error and the worker's", err)
+	}
+}
+
+func TestWorkerIsGivenUpOnAfterTheTimeout(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "uv"), []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+	old := workerTimeout
+	workerTimeout = 200 * time.Millisecond
+	defer func() { workerTimeout = old }()
+
+	start := time.Now()
+	_, err := NewEmbedder(t.TempDir(), "cpu")([]string{"x"})
+	if err == nil || !strings.Contains(err.Error(), "timed out") || time.Since(start) > 5*time.Second {
+		t.Errorf("err %v after %v", err, time.Since(start))
 	}
 }

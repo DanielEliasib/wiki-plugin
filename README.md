@@ -31,8 +31,9 @@ embed_model: bge-small         # optional: the "model" field sent to embed_url
 ```
 
 With `embed_url` set (any OpenAI-compatible `/v1/embeddings` endpoint),
-embeddings come from there and `embed_device` is ignored; if the endpoint
-cannot be reached, the local worker stands in. The endpoint must serve the
+embeddings come from there; if the endpoint cannot be reached, the local
+worker (`embed_worker_dir`, `embed_device`) stands in, and an error reports
+both failures. The endpoint must serve the
 same model as the worker, or the vectors will not match the index.
 The index records its vector size: after changing the embedding model, search
 and `wiki watch` refuse the old index with an error that says to run
