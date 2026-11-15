@@ -177,7 +177,8 @@ the "go update a bunch of notes" chore that motivated this whole design.
   wiki prune
   ```
   Same report Claude would see — similar-note merge candidates, stale
-  project/area folders. Report-only, never mutates.
+  project/area folders. Report-only, never mutates. `--similarity 0.92` and
+  `--stale-days 180` (the defaults) set the thresholds.
 - **Point at a different vault:**
   ```bash
   wiki search "..." --vault /path/to/other-vault

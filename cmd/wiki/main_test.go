@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func runCmd(t *testing.T, args ...string) (stdout, stderr string, err error) {
@@ -267,5 +268,22 @@ func TestSearchHelpDescribesTopKAsAllResults(t *testing.T) {
 	stdout, _, _ := runCmd(t, "search", "--help")
 	if strings.Contains(stdout, "max semantic results") {
 		t.Errorf("stale --top-k help:\n%s", stdout)
+	}
+}
+
+func TestPruneThresholdsAreFlags(t *testing.T) {
+	root := t.TempDir()
+	writeVaultFile(t, root, "projects/old/a.md", "---\ntitle: A\n---\nBody.\n")
+	old := time.Now().Add(-40 * 24 * time.Hour)
+	if err := os.Chtimes(filepath.Join(root, "projects", "old", "a.md"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := runCmd(t, "prune", "--vault", root, "--json")
+	if err != nil || strings.Contains(stdout, `"old"`) {
+		t.Fatalf("default 180 days: err %v, out %s", err, stdout)
+	}
+	stdout, _, err = runCmd(t, "prune", "--vault", root, "--json", "--stale-days", "30")
+	if err != nil || !strings.Contains(stdout, `"old"`) {
+		t.Errorf("--stale-days 30: err %v, out %s", err, stdout)
 	}
 }

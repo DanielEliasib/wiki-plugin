@@ -123,7 +123,8 @@ func newReindexCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 }
 
 func newPruneCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
-	return &cobra.Command{
+	var similarity, staleDays float64
+	cmd := &cobra.Command{
 		Use:           "prune",
 		Short:         "Report merge candidates and stale folders",
 		SilenceErrors: true,
@@ -133,8 +134,7 @@ func newPruneCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			root := settings.Vault
-			report, err := wikicmd.Prune(root, 0.92, 180)
+			report, err := wikicmd.Prune(settings.Vault, similarity, staleDays)
 			if err != nil {
 				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
@@ -142,6 +142,9 @@ func newPruneCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 			return render.Prune(cmd.OutOrStdout(), *jsonFlag, report)
 		},
 	}
+	cmd.Flags().Float64Var(&similarity, "similarity", 0.92, "report note pairs at least this similar (0 to 1)")
+	cmd.Flags().Float64Var(&staleDays, "stale-days", 180, "report project and area folders untouched for this many days")
+	return cmd
 }
 
 func newWatchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
