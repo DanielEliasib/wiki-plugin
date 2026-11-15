@@ -21,7 +21,7 @@ wiki reindex          # incremental: embeds only changed notes, drops deleted on
 wiki reindex --full   # rebuild from scratch, e.g. after changing the embedding model
 ```
 
-Updates the semantic search index, after first regenerating every `_index.md`. A note is embedded again only when its text changed since it was indexed (the index stores a hash per note), so a run over an unchanged vault embeds nothing. `--full` re-embeds every note and keeps the old index if that fails. **This overwrites every `_index.md`**, so a vault whose hand-written indexes have not yet been renamed to `_overview.md` loses that prose on the first run. Run it after bulk edits or if search looks stale. The notes to embed go in one batched call to the embedding worker.
+Updates the semantic search index, after first regenerating every `_index.md`. It goes through the same step as `wiki watch`, so it also drops index entries whose file is gone or lies in a hidden folder, and it lists notes it could not read (`failed` in `--json`) instead of stopping. A note is embedded again only when its text changed since it was indexed (the index stores a hash per note), so a run over an unchanged vault embeds nothing. `--full` re-embeds every note and keeps the old index if that fails. **This overwrites every `_index.md`**, so a vault whose hand-written indexes have not yet been renamed to `_overview.md` loses that prose on the first run. Run it after bulk edits or if search looks stale. The notes to embed go in one batched call to the embedding worker.
 
 ## Watching
 
@@ -29,7 +29,7 @@ Updates the semantic search index, after first regenerating every `_index.md`. A
 wiki watch
 ```
 
-Runs in the foreground and incrementally re-embeds notes as they change; it also regenerates the affected folder's `_index.md` on add, remove or rename. Stop with Ctrl+C. Nothing starts it automatically.
+Runs in the foreground and incrementally re-embeds notes as they change; it also regenerates the affected folder's `_index.md` on add, remove or rename. Hidden folders are neither watched nor indexed. When a batch fails (a note cannot be read, or the embedding service is down) the other notes are still applied and the failed ones are tried again after 5 s, 30 s and 2 min; after that a path is left until it changes again, with a log line suggesting `wiki reindex`. Stop with Ctrl+C. Nothing starts it automatically.
 
 ## Drafts
 
@@ -67,4 +67,4 @@ A new `source` value added by Claude Code will not match until the matcher is up
 
 ## Structured output
 
-Every subcommand accepts `--json`. `search`, `reindex`, `prune` and `index` print one JSON object; `watch --json` streams newline-delimited events (`{"event":"watching",...}`, then `{"event":"batch","upserted":[...],"removed":[...]}`). With `--json`, errors print `{"error": "..."}` to stdout, so a single stdout parse handles success and failure. `map` has no `--json`; `map --hook` emits hook JSON.
+Every subcommand accepts `--json`. `search`, `reindex`, `prune` and `index` print one JSON object; `watch --json` streams newline-delimited events (`{"event":"watching",...}`, then `{"event":"batch","upserted":[...],"removed":[...]}`). With `--json`, errors print `{"error": "..."}` to stdout, so a single stdout parse handles success and failure. `map` and `install` have no `--json` and refuse the flag; `map --hook` emits hook JSON. `search` adds `warning` when it fell back to keywords only; `reindex` adds `failed` when notes could not be read.

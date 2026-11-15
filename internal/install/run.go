@@ -82,6 +82,9 @@ func Warnings() []string {
 	if _, err := exec.LookPath("uv"); err != nil {
 		w = append(w, "uv is not on PATH; semantic search needs it (https://docs.astral.sh/uv/)")
 	}
+	if _, err := exec.LookPath("rg"); err != nil {
+		w = append(w, "rg is not on PATH; `wiki search` leaves out its exact phrase matches without it (https://github.com/BurntSushi/ripgrep)")
+	}
 	if _, err := exec.LookPath("wiki"); err != nil {
 		w = append(w, "wiki is not on PATH; the SessionStart hook runs `wiki`, so run `make install` and add $(go env GOPATH)/bin to PATH")
 	}

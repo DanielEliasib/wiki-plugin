@@ -157,3 +157,13 @@ func TestExistingConfigAndForeignLink(t *testing.T) {
 		t.Fatal("want error when the skill link points elsewhere")
 	}
 }
+
+func TestWarningsNameEveryMissingTool(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	got := strings.Join(Warnings(), "\n")
+	for _, tool := range []string{"uv", "rg", "wiki"} {
+		if !strings.Contains(got, tool+" is not on PATH") {
+			t.Errorf("no warning for %s:\n%s", tool, got)
+		}
+	}
+}

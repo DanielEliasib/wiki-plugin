@@ -11,13 +11,32 @@ them.
 Settings resolve in this order: `--vault` flag, environment variable, config
 file, built-in default. The config file is `wiki/config.yaml` in your user
 config directory (`~/.config/wiki/config.yaml` on Linux); set `WIKI_CONFIG`
-to use another path.
+to use another path. It is read once per command, and a file that does not
+parse is an error (naming the file), not ignored.
+
+| Setting | Flag | Environment | Config key | Default |
+|---|---|---|---|---|
+| Vault | `--vault` | `WIKI_ROOT` | `vault` | `~/notes/wiki` |
+| Embedding endpoint | | `WIKI_EMBED_URL` | `embed_url` | none: the local worker |
+| Endpoint model name | | | `embed_model` | none |
+| Worker directory | | `WIKI_EMBED_WORKER_DIR` | `embed_worker_dir` | `../embed_worker` next to the binary |
+| Worker device | | `WIKI_EMBED_DEVICE` | `embed_device` | `cpu` |
 
 ```yaml
-vault: ~/notes/wiki            # default; also WIKI_ROOT or --vault
-embed_worker_dir: ~/src/wiki_skill/embed_worker   # also WIKI_EMBED_WORKER_DIR
-embed_device: cpu              # default; "gpu" for NVIDIA (CUDA 12); also WIKI_EMBED_DEVICE
+vault: ~/notes/wiki
+embed_worker_dir: ~/src/wiki_skill/embed_worker
+embed_device: cpu              # "gpu" for NVIDIA (CUDA 12)
+embed_url: http://localhost:8080/v1/embeddings   # optional, see below
+embed_model: bge-small         # optional: the "model" field sent to embed_url
 ```
+
+With `embed_url` set (any OpenAI-compatible `/v1/embeddings` endpoint),
+embeddings come from there and `embed_device` is ignored; if the endpoint
+cannot be reached, the local worker stands in. The endpoint must serve the
+same model as the worker, or the vectors will not match the index.
+The index records its vector size: after changing the embedding model, search
+and `wiki watch` refuse the old index with an error that says to run
+`wiki reindex --full`.
 
 `embed_worker_dir` must point at this repo's `embed_worker/` directory. It is
 found automatically when the binary is `bin/wiki` from `make build`;
@@ -109,9 +128,13 @@ the "go update a bunch of notes" chore that motivated this whole design.
   Flags can go before or after the query. Prints one entry per note, best
   first: path, how it matched (keyword, semantic or both), the semantic
   similarity, title and date, and the section that matched. Exact-phrase
-  matches of the whole query follow. Without an index (`wiki reindex`) only
-  keyword ranking runs. Hidden folders (`.claude/`, `.wiki/`, ...) are never
-  indexed or searched.
+  matches of the whole query follow (these need [ripgrep](https://github.com/BurntSushi/ripgrep)
+  on the `PATH`; without `rg` they are left out). Without an index
+  (`wiki reindex`) only keyword ranking runs. If the semantic half fails (the
+  embedding service is down, or the index was built with another model) the
+  search still answers by keywords and says why in a warning line (`warning`
+  in `--json`). Hidden folders (`.claude/`, `.wiki/`, ...) are never indexed
+  or searched.
 - **Browse the vault:**
   ```bash
   wiki index          # every Project/Area/Resource with its gist
@@ -129,7 +152,9 @@ the "go update a bunch of notes" chore that motivated this whole design.
   wiki reindex --full   # rebuild from scratch (after changing the embedding model)
   ```
   Also regenerates every `_index.md`. Incremental by default: notes whose
-  text is unchanged keep their embeddings, deleted notes are dropped.
+  text is unchanged keep their embeddings, and index entries whose file is
+  gone (or sits in a hidden folder) are dropped. A note that cannot be read
+  (broken frontmatter) is listed and skipped; the rest is still indexed.
 - **Keep the index live while editing:**
   ```bash
   wiki watch
@@ -138,7 +163,9 @@ the "go update a bunch of notes" chore that motivated this whole design.
   on disk (create/edit/delete), so semantic search stays current without
   remembering to run `wiki reindex` — useful in a spare terminal/tmux pane
   while editing in Obsidian or nvim. Stop with Ctrl+C; not started
-  automatically by anything.
+  automatically by anything. A note that fails to update (unreadable, or the
+  embedding service is down) is tried again after 5 s, 30 s and 2 min, then
+  left until it changes again; `wiki reindex` catches up on anything missed.
 - **Drop quick notes in `drafts/`:**
   A freeform capture folder at the vault root — no frontmatter, no naming
   convention. Jot things down through the day, then ask Claude to process
@@ -158,7 +185,10 @@ the "go update a bunch of notes" chore that motivated this whole design.
 
 ## Install
 
-Prerequisites: [Go](https://go.dev/dl/) and [uv](https://docs.astral.sh/uv/).
+Prerequisites: [Go](https://go.dev/dl/), [uv](https://docs.astral.sh/uv/)
+(runs the embedding worker) and [ripgrep](https://github.com/BurntSushi/ripgrep)
+(exact-phrase matches in `wiki search`). `wiki install` warns about any that
+is missing.
 
 ```bash
 make install-skill
@@ -189,12 +219,14 @@ Restart Claude Code to load the skill and hook. Other targets: `make build`
 
 ```
 cmd/wiki/main.go       # CLI entrypoint, subcommand dispatch
-internal/config/       # config file loading
-internal/vault/        # frontmatter I/O, vault root resolution
+internal/config/       # config file and the resolved settings (flag, env, file, default)
+internal/vault/        # frontmatter I/O and the rule for what is a Note
 internal/install/      # skill link, config and hook installer
-internal/index/        # sqlite-backed semantic index
-internal/embedworker/  # spawns the Python embedding worker
-internal/wikicmd/      # search / reindex / prune / init command logic
+internal/index/        # the Search index: sqlite file, atomic writes, vector size
+internal/ranking/      # keyword + semantic fusion, best section and lines (no I/O)
+internal/keyword/      # BM25 over notes and sections
+internal/embedworker/  # embeddings: the endpoint, or the Python worker
+internal/wikicmd/      # search / reindex / watch / prune / init command logic
 embed_worker/          # thin fastembed wrapper (the only Python left)
 SKILL.md               # what Claude Code reads to use this skill
 ```
