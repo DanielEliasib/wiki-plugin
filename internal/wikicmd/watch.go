@@ -1,7 +1,6 @@
 package wikicmd
 
 import (
-	"database/sql"
 	"fmt"
 	"io"
 	"io/fs"
@@ -39,18 +38,11 @@ func addDirsRecursively(watcher *fsnotify.Watcher, root, dir string) error {
 // debounce timer are both read from the same select loop, so there is no
 // concurrent access to the pending-change sets.
 func RunWatch(root string, embed embedworker.Embedder, debounce time.Duration, stderr io.Writer, onBatch func(upserted, removed []string)) error {
-	dbPath := filepath.Join(root, ".wiki", "index.sqlite")
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-		return err
-	}
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)")
+	db, err := index.Open(root)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	if err := index.InitDB(db); err != nil {
-		return err
-	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {

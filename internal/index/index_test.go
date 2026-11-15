@@ -3,8 +3,11 @@ package index
 import (
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -285,5 +288,127 @@ func TestRebuildIndexKeepsOldIndexWhenEmbeddingFails(t *testing.T) {
 	var n int
 	if err := db.QueryRow("SELECT count(*) FROM notes").Scan(&n); err != nil || n != 2 {
 		t.Fatalf("rows after failed rebuild = %d (%v), want the old 2", n, err)
+	}
+}
+
+func dimEmbedder(dim int) embedworker.Embedder {
+	return func(texts []string) ([][]float64, error) {
+		out := make([][]float64, len(texts))
+		for i, t := range texts {
+			v := make([]float64, dim)
+			for j := range v {
+				v[j] = float64(len(t)%7 + j + 1)
+			}
+			out[i] = v
+		}
+		return out, nil
+	}
+}
+
+func TestFailedWriteLeavesTheOldNoteAndLetsItBeRetried(t *testing.T) {
+	db := openTestDB(t)
+	if err := UpsertNote(db, "a.md", "# A\nold text\n", fakeEmbedder); err != nil {
+		t.Fatal(err)
+	}
+	oldHash, _, _ := HashForPath(db, "a.md")
+	if _, err := db.Exec(`CREATE TRIGGER boom BEFORE INSERT ON chunks WHEN new.text LIKE '%BOOM%' BEGIN SELECT RAISE(ABORT, 'disk full'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	newText := "# A\nnew text BOOM\n"
+	if _, err := UpsertBatch(db, []NoteText{{Path: "a.md", Text: newText}}, fakeEmbedder); err == nil {
+		t.Fatal("expected the write to fail")
+	}
+	hash, _, _ := HashForPath(db, "a.md")
+	if hash != oldHash {
+		t.Errorf("hash moved to %s although the write failed", hash)
+	}
+	var chunks int
+	db.QueryRow("SELECT COUNT(*) FROM chunks WHERE path = 'a.md'").Scan(&chunks)
+	if chunks == 0 {
+		t.Error("the note's chunks were lost by the failed write")
+	}
+
+	db.Exec("DROP TRIGGER boom")
+	upserted, err := UpsertBatch(db, []NoteText{{Path: "a.md", Text: newText}}, fakeEmbedder)
+	if err != nil || len(upserted) != 1 {
+		t.Errorf("retry: upserted %v, err %v", upserted, err)
+	}
+}
+
+func TestSearchRefusesAQueryOfAnotherDimension(t *testing.T) {
+	db := openTestDB(t)
+	if err := UpsertNote(db, "a.md", "some text", dimEmbedder(2)); err != nil {
+		t.Fatal(err)
+	}
+	for _, dim := range []int{1, 3} {
+		_, err := Search(db, "some text", dimEmbedder(dim), 5)
+		if err == nil || !strings.Contains(err.Error(), "reindex --full") {
+			t.Errorf("dim %d: got err %v, want one that names `wiki reindex --full`", dim, err)
+		}
+	}
+	if _, err := Search(db, "some text", dimEmbedder(2), 5); err != nil {
+		t.Errorf("same dimension: %v", err)
+	}
+}
+
+func TestUpsertRefusesAVectorOfAnotherDimension(t *testing.T) {
+	db := openTestDB(t)
+	if err := UpsertNote(db, "a.md", "some text", dimEmbedder(2)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UpsertBatch(db, []NoteText{{Path: "b.md", Text: "other text"}}, dimEmbedder(3)); err == nil || !strings.Contains(err.Error(), "reindex --full") {
+		t.Errorf("got err %v", err)
+	}
+	if hash, found, _ := HashForPath(db, "b.md"); found {
+		t.Errorf("b.md was written (%s)", hash)
+	}
+}
+
+func TestRebuildSwitchesTheDimension(t *testing.T) {
+	db := openTestDB(t)
+	if err := UpsertNote(db, "a.md", "some text", dimEmbedder(2)); err != nil {
+		t.Fatal(err)
+	}
+	if err := RebuildIndex(db, []NoteText{{Path: "a.md", Text: "some text"}}, dimEmbedder(3)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Search(db, "some text", dimEmbedder(3), 5); err != nil {
+		t.Errorf("after the rebuild: %v", err)
+	}
+	if _, err := Search(db, "some text", dimEmbedder(2), 5); err == nil {
+		t.Error("the old dimension should now be refused")
+	}
+}
+
+func TestEmbedderReturningMixedLengthsIsAnError(t *testing.T) {
+	db := openTestDB(t)
+	mixed := func(texts []string) ([][]float64, error) {
+		out := make([][]float64, len(texts))
+		for i := range texts {
+			out[i] = make([]float64, 2+i%2)
+		}
+		return out, nil
+	}
+	if err := RebuildIndex(db, []NoteText{{Path: "a.md", Text: "x\n\n## b\ny"}}, mixed); err == nil {
+		t.Error("expected an error")
+	}
+}
+
+func TestOpenCreatesTheIndexInsideTheVault(t *testing.T) {
+	root := t.TempDir()
+	db, err := Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := UpsertNote(db, "a.md", "text", fakeEmbedder); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(Path(root)); err != nil {
+		t.Errorf("no index file at %s: %v", Path(root), err)
+	}
+	if got := Path(root); got != filepath.Join(root, ".wiki", "index.sqlite") {
+		t.Errorf("Path = %s", got)
 	}
 }

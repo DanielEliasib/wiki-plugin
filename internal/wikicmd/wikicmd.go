@@ -73,12 +73,6 @@ type PruneReport struct {
 	StaleFolders    []StaleFolder    `json:"stale_folders"`
 }
 
-func openIndexDB(root string) (*sql.DB, string, error) {
-	dbPath := filepath.Join(root, ".wiki", "index.sqlite")
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(10000)")
-	return db, dbPath, err
-}
-
 func noteToIndexText(root, path string) (index.NoteText, error) {
 	note, err := vault.ReadNote(path)
 	if err != nil {
@@ -97,18 +91,12 @@ func noteToIndexText(root, path string) (index.NoteText, error) {
 // changed since they were indexed are embedded again, and notes whose file is gone are dropped. full rebuilds the
 // whole index from scratch (needed after changing the embedding model), keeping the old index if that fails.
 func Reindex(root string, embed embedworker.Embedder, full bool) (ReindexReport, error) {
-	dbDir := filepath.Join(root, ".wiki")
-	if err := os.MkdirAll(dbDir, 0o755); err != nil {
-		return ReindexReport{}, err
-	}
-	db, dbPath, err := openIndexDB(root)
+	dbPath := index.Path(root)
+	db, err := index.Open(root)
 	if err != nil {
 		return ReindexReport{}, err
 	}
 	defer db.Close()
-	if err := index.InitDB(db); err != nil {
-		return ReindexReport{}, err
-	}
 
 	if err := WriteVaultIndexes(root); err != nil {
 		return ReindexReport{}, err
@@ -246,17 +234,13 @@ func Search(root, query string, embed embedworker.Embedder, topK int) (SearchRep
 	kwHits := kix.Search(query, len(docs))
 	secHits := sectionHits(docs, query, len(docs))
 
-	dbPath := filepath.Join(root, ".wiki", "index.sqlite")
-	if _, err := os.Stat(dbPath); err == nil {
+	if _, err := os.Stat(index.Path(root)); err == nil {
 		report.SemanticIndexed = true
-		db, _, err := openIndexDB(root)
+		db, err := index.Open(root)
 		if err != nil {
 			return SearchReport{}, err
 		}
 		defer db.Close()
-		if err := index.InitDB(db); err != nil {
-			return SearchReport{}, err
-		}
 		results, err := index.Search(db, query, embed, len(docs)+1) // every note: each candidate gets a similarity
 		if err != nil {
 			return SearchReport{}, err
@@ -450,9 +434,8 @@ func noteDate(path string) string {
 
 func Prune(root string, similarityThreshold float64, staleDays float64) (PruneReport, error) {
 	var report PruneReport
-	dbPath := filepath.Join(root, ".wiki", "index.sqlite")
-	if _, statErr := os.Stat(dbPath); statErr == nil {
-		db, _, err := openIndexDB(root)
+	if _, statErr := os.Stat(index.Path(root)); statErr == nil {
+		db, err := index.Open(root)
 		if err != nil {
 			return PruneReport{}, err
 		}
