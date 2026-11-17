@@ -14,7 +14,7 @@ drafts/            # the inbox: drafts not yet tied to a folder (e.g. video-inge
 .wiki/index.sqlite # semantic search index: rebuildable, never hand-edit
 ```
 
-Inside each folder: `notes/` (with `decisions/`, `questions/` and other kinds below it), `drafts/`, `logs/`, `raw/`, `_sources.md`, `_overview.md` and the generated `_index.md`; see "Folder layout" in [SKILL.md](SKILL.md). Logs and `_sources.md` are left out of search unless `--logs`.
+Inside each folder: `notes/` (with `decisions/`, `questions/` and other kinds below it), `drafts/`, `logs/` (one dated log per stream: maintenance, build, a topic), `raw/`, `_sources.md`, `_overview.md` and the generated `_index.md`; see "Folder layout" in [SKILL.md](SKILL.md). Logs and `_sources.md` are left out of search unless `--logs`.
 
 ## Reindexing
 

@@ -53,7 +53,7 @@ Every Project, Area and Resource folder has the same shape; create a subfolder o
     questions/   open questions only
     <kind>/      a kind with about five notes or more: specs/, plans/, meetings/, guides/, research/ ...
   drafts/        this folder's unfinished notes: freeform, no frontmatter
-  logs/          maintenance-log.md (what was done, by date) and any other logs
+  logs/          dated logs: maintenance-log.md, build-log.md, <topic>-log.md ...
   raw/           source material, not notes: imports, exports, data, scripts, PDFs
   _sources.md    optional: where the facts came from
 ```
@@ -66,8 +66,8 @@ Every Project, Area and Resource folder has the same shape; create a subfolder o
 
 Each folder keeps three kinds of file apart:
 
-- **Notes** say what is true now. A topic page or `_overview.md` that changes is rewritten to the current state; an atomic note is superseded (step 4). Dated "Update (YYYY-MM-DD)" sections in a note are history: they go in the log.
-- **The log**, `<folder>/logs/maintenance-log.md`, records what was done and when: one `## YYYY-MM-DD` entry per session, a line or two per change, linking the notes it touched. Create it when a folder first needs one.
+- **Notes** say what is true now. A topic page or `_overview.md` that changes is rewritten to the current state; an atomic note is superseded (step 4). Dated "Update (YYYY-MM-DD)" sections and session-by-session narration in a note are history: they go in a log.
+- **Logs**, in `<folder>/logs/`, record what happened and when, as dated entries (`## YYYY-MM-DD`, newest last), each linking the notes it touched. One log per stream, named for it: `maintenance-log.md` for upkeep and changes, `build-log.md` for building a thing, `<topic>-log.md` for a running record such as meter readings, experiment runs or meetings. Add the entry to the log whose stream it belongs to; create a log when a stream first needs one. A note that is itself a dated record (readings, runs, a session diary) is a log: it lives in `logs/`.
 - **Sources**, `<folder>/_sources.md`, records where facts came from (raw files, measurements, URLs), when that provenance is worth keeping.
 
 Search and the session map leave logs, sources and the archive out; `wiki search --logs` and `--archive` include them.
