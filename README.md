@@ -74,7 +74,8 @@ type: atomic | topic
 area: <slug>
 tags: [tag1, tag2]
 pinned: true              # optional: always listed in the session map
-superseded_by: [[note]]   # optional
+superseded_by: [[note]]   # optional: replaced, goes to the archive
+followed_by: [[note]]     # optional: still stands, continued there
 ---
 ```
 
@@ -85,7 +86,8 @@ superseded_by: [[note]]   # optional
 
 The core rule: **never rewrite an old atomic note to keep it "current."**
 When something changes, write a new atomic note and set `superseded_by:
-[[new-note]]` on the old one. This is what removes
+[[new-note]]` on the old one if the new note replaces it, or `followed_by:
+[[new-note]]` if the old note still stands and the new one continues it. This is what removes
 the "go update a bunch of notes" chore that motivated this whole design.
 
 ## Use Cases — Claude Code (the agent)

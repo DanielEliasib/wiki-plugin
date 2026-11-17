@@ -37,7 +37,11 @@ wiki search "<query>" --top-k 10
 1. Pick the bucket: Project (has a deliverable), Area (ongoing, no end state), or Resource (reference, not tied to one of those).
 2. Default to an **atomic note**: one fact, decision, event, or recipe per file. Write a **topic page** only when asked for a long-form writeup or the content is inherently tutorial-shaped.
 3. Search first (above). Link related notes with `[[filename-stem]]`, never with a relative path: notes move between subfolders and into `archive/`, and a stem link survives that.
-4. Never rewrite an old atomic note to keep it current. Write a new note and set `superseded_by: [[new-note]]` on the old one.
+4. Never rewrite an old atomic note to keep it current. Write a new note, then mark the old one with the field that matches:
+   - `superseded_by: [[new-note]]` when the new note replaces the old one's whole claim: the old note is no longer the answer (a reversed decision, an answered question, a setup that was replaced). The old note then goes to the archive.
+   - `followed_by: [[new-note]]` when the old note still stands and the new one builds on it: a follow-up test, the next meeting, a narrower question, a fix for one part. If one part of the old note is now wrong, also add one line under its frontmatter: `**Outdated part:** <what changed>, see [[new-note]].` The note stays live.
+
+   A meeting, a test run or any other dated event is never superseded; at most it is followed.
 5. File it by the folder layout below.
 
 ### Folder layout
@@ -82,7 +86,8 @@ type: atomic | topic
 area: <slug>
 tags: [tag1, tag2]
 pinned: true            # optional: always listed in the session map
-superseded_by: [[note]] # optional
+superseded_by: [[note]] # optional: replaced, goes to the archive
+followed_by: [[note]]   # optional: still stands, continued there
 ---
 ```
 
