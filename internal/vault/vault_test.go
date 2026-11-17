@@ -169,3 +169,20 @@ func TestParseFrontmatterAcceptsCRLFAndAnEmptyBlock(t *testing.T) {
 		})
 	}
 }
+
+func TestIsRecordSpotsLogsAndSources(t *testing.T) {
+	cases := map[string]bool{
+		"projects/demo/logs/maintenance-log.md":   true,
+		"projects/demo/logs/2026/run.md":          true,
+		"areas/demo/_sources.md":                  true,
+		"projects/demo/notes/first-note.md":       false,
+		"projects/demo/_overview.md":              false,
+		"projects/demo/notes/logs.md":             false,
+		"projects/demo/notes/catalogs/sources.md": false,
+	}
+	for rel, want := range cases {
+		if got := IsRecord(filepath.FromSlash(rel)); got != want {
+			t.Errorf("IsRecord(%q) = %v, want %v", rel, got, want)
+		}
+	}
+}

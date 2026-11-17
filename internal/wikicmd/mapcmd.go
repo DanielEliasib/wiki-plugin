@@ -120,6 +120,7 @@ func Map(root, cwd string, now time.Time) (string, error) {
 			if err != nil {
 				return "", err
 			}
+			paths = withoutRecordPaths(root, paths)
 			ov := readOverview(f)
 			matched := cwdMatches(cwd, ov.Paths)
 
@@ -233,4 +234,17 @@ func withoutCodeFences(text string) string {
 		}
 	}
 	return out.String()
+}
+
+// withoutRecordPaths drops Records (logs, sources files) from absolute note paths: the session map lists knowledge,
+// not history.
+func withoutRecordPaths(root string, paths []string) []string {
+	kept := paths[:0:0]
+	for _, p := range paths {
+		if rel, err := filepath.Rel(root, p); err == nil && vault.IsRecord(rel) {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept
 }

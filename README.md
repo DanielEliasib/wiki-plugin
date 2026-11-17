@@ -136,6 +136,9 @@ the "go update a bunch of notes" chore that motivated this whole design.
   search still answers by keywords and says why in a warning line (`warning`
   in `--json`). Hidden folders (`.claude/`, `.wiki/`, ...) are never indexed
   or searched.
+  Logs (files under a `logs/` folder) and sources files (`_sources.md`) are
+  indexed but left out of results unless you pass `--logs`; the session map
+  and `wiki prune` leave them out too.
 - **Browse the vault:**
   ```bash
   wiki index          # every Project/Area/Resource with its gist

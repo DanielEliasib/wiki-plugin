@@ -28,6 +28,10 @@ _Avoid_: favourite, bookmark
 How many `[[wikilinks]]` across the Vault point at a Note, by basename, ignoring links from generated vault indexes, from `_overview.md` files (authored lists would otherwise inflate the notes they enumerate), and from a Note to itself. One input to the relevance score that picks the session map's subset of Notes.
 _Avoid_: popularity, usage
 
+**Record**:
+A Note that holds history rather than current knowledge: a folder's log (any file under `logs/`, what was done and when) or its `_sources.md` (where facts came from). Indexed like any Note, but search, the session map and prune leave Records out unless asked (`wiki search --logs`).
+_Avoid_: archive (that is the `archive/` bucket), changelog
+
 **Vault index**:
 The `_index.md` file in each Project, Area, and Resource folder: a generated list of links to that folder's notes. Never hand-edited.
 _Avoid_: index (alone), table of contents

@@ -107,6 +107,8 @@ const (
 const (
 	overviewFile  = "_overview.md"
 	generatedFile = "_index.md"
+	sourcesFile   = "_sources.md"
+	logsDir       = "logs"
 )
 
 // IsHiddenName reports whether a file or folder name is hidden. Hidden folders (.wiki's own data, .obsidian,
@@ -132,6 +134,24 @@ func Classify(rel string) Kind {
 		return KindOverview
 	}
 	return KindNote
+}
+
+// IsRecord reports whether a Vault-relative path is a Record: a file inside a `logs/` folder (what was done, by
+// date) or a folder's `_sources.md` (where its facts came from). Records are Notes, indexed like any other, but
+// search, the session map and prune leave them out unless asked, so dated history does not crowd out the notes
+// that say what is true now.
+func IsRecord(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	if filepath.Base(rel) == sourcesFile {
+		return true
+	}
+	parts := strings.Split(rel, "/")
+	for _, part := range parts[:len(parts)-1] {
+		if part == logsDir {
+			return true
+		}
+	}
+	return false
 }
 
 // Walk calls fn, in lexical order, for every Note, overview and generated index under dir (a folder inside root),

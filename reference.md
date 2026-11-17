@@ -8,7 +8,9 @@ Less common features of the `wiki` CLI. The everyday procedure is in [SKILL.md](
 projects/<slug>/   # deliverable-driven work, usually maps to a codebase
 areas/<slug>/      # ongoing responsibility, no end state
 resources/<slug>/  # reference material not tied to one project or area
-archive/           # closed-out projects and areas
+archive/           # closed-out projects and areas, and notes retired from them (same path below archive/)
+<folder>/logs/     # the folder's log: what was done, by date (left out of search unless --logs)
+<folder>/_sources.md  # where the folder's facts came from (left out of search unless --logs)
 .wiki/index.sqlite # semantic search index: rebuildable, never hand-edit
 ```
 

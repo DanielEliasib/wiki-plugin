@@ -73,6 +73,7 @@ func errWriter(cmd *cobra.Command, jsonFlag bool) io.Writer {
 
 func newSearchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 	var topK int
+	var withRecords bool
 	cmd := &cobra.Command{
 		Use:           "search <query>",
 		Short:         "Search notes by keywords and meaning, one result per note",
@@ -85,7 +86,7 @@ func newSearchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 				return err
 			}
 			root := settings.Vault
-			report, err := wikicmd.Search(root, args[0], embedworker.FromSettings(settings), topK)
+			report, err := wikicmd.Search(root, args[0], embedworker.FromSettings(settings), topK, withRecords)
 			if err != nil {
 				render.Error(errWriter(cmd, *jsonFlag), *jsonFlag, err)
 				return err
@@ -94,6 +95,7 @@ func newSearchCmd(vaultFlag *string, jsonFlag *bool) *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&topK, "top-k", 10, "max results")
+	cmd.Flags().BoolVar(&withRecords, "logs", false, "also search logs (logs/ folders) and sources files (_sources.md)")
 	return cmd
 }
 

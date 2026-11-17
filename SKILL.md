@@ -30,6 +30,7 @@ wiki search "<query>" --top-k 10
 - Browse instead of searching when you want the inventory: `wiki index` lists every folder with its gist; `wiki index <name>` lists one folder's notes (`<kind>/<name>` if the name exists in two buckets).
 - Skip the search for trivial edits and anything fully inside the current repo.
 - On zero hits, say nothing, unless the task was a knowledge question: then say the vault had nothing.
+- Search leaves out logs and sources files (below). Add `--logs` when you need the history: when something was done, or where a fact came from.
 
 ## Capturing
 
@@ -37,6 +38,16 @@ wiki search "<query>" --top-k 10
 2. Default to an **atomic note**: one fact, decision, event, or recipe per file. Write a **topic page** only when asked for a long-form writeup or the content is inherently tutorial-shaped.
 3. Search first (above). Link related notes with `[[filename-stem]]`.
 4. Never rewrite an old atomic note to keep it current. Write a new note and set `superseded_by: [[new-note]]` on the old one.
+
+### Notes, logs and sources
+
+Each folder keeps three kinds of file apart:
+
+- **Notes** say what is true now. A topic page or `_overview.md` that changes is rewritten to the current state; an atomic note is superseded (step 4). Dated "Update (YYYY-MM-DD)" sections in a note are history: they go in the log.
+- **The log**, `<folder>/logs/maintenance-log.md`, records what was done and when: one `## YYYY-MM-DD` entry per session, a line or two per change, linking the notes it touched. Create it when a folder first needs one.
+- **Sources**, `<folder>/_sources.md`, records where facts came from (raw files, measurements, URLs), when that provenance is worth keeping.
+
+Search and the session map leave logs and sources out; `wiki search --logs` includes them.
 
 Frontmatter on every note:
 
