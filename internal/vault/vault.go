@@ -109,6 +109,7 @@ const (
 	generatedFile = "_index.md"
 	sourcesFile   = "_sources.md"
 	logsDir       = "logs"
+	archiveDir    = "archive"
 )
 
 // IsHiddenName reports whether a file or folder name is hidden. Hidden folders (.wiki's own data, .obsidian,
@@ -152,6 +153,13 @@ func IsRecord(rel string) bool {
 		}
 	}
 	return false
+}
+
+// IsArchived reports whether a Vault-relative path lies in the archive/ bucket: closed-out folders and notes retired
+// from live ones. Archived Notes are indexed, but search, the session map and prune leave them out unless asked.
+func IsArchived(rel string) bool {
+	first, _, _ := strings.Cut(filepath.ToSlash(rel), "/")
+	return first == archiveDir
 }
 
 // Walk calls fn, in lexical order, for every Note, overview and generated index under dir (a folder inside root),

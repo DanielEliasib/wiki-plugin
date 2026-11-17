@@ -30,7 +30,7 @@ wiki search "<query>" --top-k 10
 - Browse instead of searching when you want the inventory: `wiki index` lists every folder with its gist; `wiki index <name>` lists one folder's notes (`<kind>/<name>` if the name exists in two buckets).
 - Skip the search for trivial edits and anything fully inside the current repo.
 - On zero hits, say nothing, unless the task was a knowledge question: then say the vault had nothing.
-- Search leaves out logs and sources files (below). Add `--logs` when you need the history: when something was done, or where a fact came from.
+- Search leaves out logs and sources files (below) and the `archive/`. Add `--logs` for the history (when something was done, where a fact came from), `--archive` for retired notes and closed-out folders.
 
 ## Capturing
 

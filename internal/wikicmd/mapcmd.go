@@ -236,12 +236,12 @@ func withoutCodeFences(text string) string {
 	return out.String()
 }
 
-// withoutRecordPaths drops Records (logs, sources files) from absolute note paths: the session map lists knowledge,
-// not history.
+// withoutRecordPaths drops Records (logs, sources files) and archived notes from absolute note paths: the session map
+// lists knowledge, not history.
 func withoutRecordPaths(root string, paths []string) []string {
 	kept := paths[:0:0]
 	for _, p := range paths {
-		if rel, err := filepath.Rel(root, p); err == nil && vault.IsRecord(rel) {
+		if rel, err := filepath.Rel(root, p); err == nil && !live(rel) {
 			continue
 		}
 		kept = append(kept, p)

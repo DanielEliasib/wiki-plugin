@@ -186,3 +186,17 @@ func TestIsRecordSpotsLogsAndSources(t *testing.T) {
 		}
 	}
 }
+
+func TestIsArchivedSpotsTheArchiveBucket(t *testing.T) {
+	cases := map[string]bool{
+		"archive/projects/demo/old.md":        true,
+		"archive/old.md":                      true,
+		"projects/demo/notes/archive/x.md":    false,
+		"projects/archive-tools/_overview.md": false,
+	}
+	for rel, want := range cases {
+		if got := IsArchived(filepath.FromSlash(rel)); got != want {
+			t.Errorf("IsArchived(%q) = %v, want %v", rel, got, want)
+		}
+	}
+}

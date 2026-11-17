@@ -57,7 +57,7 @@ var rgTimeout = 10 * time.Second
 
 // exactMatches finds the query as a literal string (rg, case-insensitive) in the notes: at most 20 lines. The
 // warning says why there are none when rg is missing or too slow.
-func exactMatches(root, query string, withRecords bool) ([]GrepMatch, string) {
+func exactMatches(root, query string, opts SearchOptions) ([]GrepMatch, string) {
 	if _, err := exec.LookPath("rg"); err != nil {
 		return nil, "rg (ripgrep) is not on the PATH, so exact phrase matches are left out"
 	}
@@ -66,7 +66,7 @@ func exactMatches(root, query string, withRecords bool) ([]GrepMatch, string) {
 	// -F: the query is text, not a regex ("(tokens per second)" is not a group). Only notes: no other file types
 	// and not the generated indexes.
 	args := []string{"--line-number", "--no-heading", "-i", "-F", "--glob", "*.md", "--glob", "!_index.md"}
-	if !withRecords {
+	if !opts.WithRecords {
 		args = append(args, "--glob", "!**/logs/**", "--glob", "!_sources.md")
 	}
 	cmd := exec.CommandContext(ctx, "rg", append(args, "--", query, root)...)
@@ -97,6 +97,9 @@ func exactMatches(root, query string, withRecords bool) ([]GrepMatch, string) {
 		file := parts[0]
 		if rel, relErr := filepath.Rel(root, file); relErr == nil {
 			file = rel
+		}
+		if !opts.includes(file) {
+			continue // rg's globs match below the search root too; filter archive/ (and Records) by path here
 		}
 		matches = append(matches, GrepMatch{File: file, Line: lineNum, Text: parts[2]})
 	}
@@ -247,19 +250,19 @@ func catchUpWith(root string, db *sql.DB) (changed, gone []string, err error) {
 // into Results, one per note with the section that matches
 // best. GrepMatches (the query as a literal string, as before) and SemanticMatches stay for older callers.
 //
-// Records (logs/ files and _sources.md, see vault.IsRecord) are left out of every part of the report unless
-// withRecords is set.
-func Search(root, query string, embed embedworker.Embedder, topK int, withRecords bool) (SearchReport, error) {
+// Records (logs/ files and _sources.md, see vault.IsRecord) and archived notes (vault.IsArchived) are left out of
+// every part of the report unless opts asks for them.
+func Search(root, query string, embed embedworker.Embedder, topK int, opts SearchOptions) (SearchReport, error) {
 	report := SearchReport{Query: query}
 
 	if strings.TrimSpace(query) == "" {
 		return SearchReport{}, errors.New("the query is empty")
 	}
 	var warning string
-	report.GrepMatches, warning = exactMatches(root, query, withRecords)
+	report.GrepMatches, warning = exactMatches(root, query, opts)
 	report.addWarning(warning)
 
-	notes, err := searchNotes(root, withRecords)
+	notes, err := searchNotes(root, opts)
 	if err != nil {
 		return SearchReport{}, err
 	}
@@ -270,7 +273,7 @@ func Search(root, query string, embed embedworker.Embedder, topK int, withRecord
 		if err != nil {
 			report.addWarning(fmt.Sprintf("semantic ranking skipped, results are by keywords only: %v", err))
 		}
-		report.SemanticMatches = withoutRecords(matches, withRecords)
+		report.SemanticMatches = opts.filter(matches)
 	}
 
 	report.Results = ranking.Rank(notes, query, report.SemanticMatches, topK)
@@ -280,14 +283,22 @@ func Search(root, query string, embed embedworker.Embedder, topK int, withRecord
 	return report, nil
 }
 
-// withoutRecords drops the Records from semantic matches unless they were asked for.
-func withoutRecords(matches []index.Result, withRecords bool) []index.Result {
-	if withRecords {
-		return matches
-	}
+// SearchOptions widens a search beyond the live notes.
+type SearchOptions struct {
+	WithRecords bool // also logs and sources files
+	WithArchive bool // also notes under archive/
+}
+
+// includes reports whether a Vault-relative path takes part in this search.
+func (o SearchOptions) includes(rel string) bool {
+	return (o.WithRecords || !vault.IsRecord(rel)) && (o.WithArchive || !vault.IsArchived(rel))
+}
+
+// filter drops the semantic matches this search leaves out.
+func (o SearchOptions) filter(matches []index.Result) []index.Result {
 	kept := matches[:0:0]
 	for _, m := range matches {
-		if !vault.IsRecord(m.Path) {
+		if o.includes(m.Path) {
 			kept = append(kept, m)
 		}
 	}
@@ -303,8 +314,9 @@ func semanticMatches(root, query string, embed embedworker.Embedder, n int) ([]i
 	return index.Search(db, query, embed, n)
 }
 
-// searchNotes reads every note for the ranking (generated vault indexes are not notes; Records only withRecords).
-func searchNotes(root string, withRecords bool) ([]ranking.Note, error) {
+// searchNotes reads every note for the ranking (generated vault indexes are not notes; Records and archived notes
+// only when opts asks).
+func searchNotes(root string, opts SearchOptions) ([]ranking.Note, error) {
 	paths, err := vault.IterNotes(root)
 	if err != nil {
 		return nil, err
@@ -316,7 +328,7 @@ func searchNotes(root string, withRecords bool) ([]ranking.Note, error) {
 			continue // a note with broken frontmatter is skipped, not fatal for search
 		}
 		rel, _ := filepath.Rel(root, p)
-		if !withRecords && vault.IsRecord(rel) {
+		if !opts.includes(rel) {
 			continue
 		}
 		notes = append(notes, ranking.Note{Path: rel, Title: note.Title(), Date: metaString(note.Meta["date"]),
@@ -344,6 +356,11 @@ func metaString(v any) string {
 	}
 }
 
+// live reports whether a Vault-relative path is a live note: neither a Record nor archived.
+func live(rel string) bool {
+	return SearchOptions{}.includes(rel)
+}
+
 func Prune(root string, similarityThreshold float64, staleDays float64) (PruneReport, error) {
 	var report PruneReport
 	if _, statErr := os.Stat(index.Path(root)); statErr == nil {
@@ -357,8 +374,8 @@ func Prune(root string, similarityThreshold float64, staleDays float64) (PruneRe
 			return PruneReport{}, err
 		}
 		for _, p := range pairs {
-			if vault.IsRecord(p.PathA) || vault.IsRecord(p.PathB) {
-				continue // a log or sources file is history, not a note to merge
+			if !live(p.PathA) || !live(p.PathB) {
+				continue // logs, sources files and archived notes are history, not notes to merge
 			}
 			report.MergeCandidates = append(report.MergeCandidates, MergeCandidate{PathA: p.PathA, PathB: p.PathB, Similarity: p.Similarity})
 		}

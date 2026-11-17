@@ -86,7 +86,7 @@ func TestSearchReportsGrepAndSemanticMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := Search(root, "first atomic note body", fakeEmbedder, 5, false)
+	report, err := Search(root, "first atomic note body", fakeEmbedder, 5, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestSearchMergesKeywordAndSemanticResults(t *testing.T) {
 	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
 	}
-	report, err := Search(root, "speed in the speed bench of 2026-03-02 (tokens per second)", fakeEmbedder, 5, false)
+	report, err := Search(root, "speed in the speed bench of 2026-03-02 (tokens per second)", fakeEmbedder, 5, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestSearchMergesKeywordAndSemanticResults(t *testing.T) {
 
 func TestSearchKeywordResultsWithoutIndex(t *testing.T) {
 	root := makeVault(t)
-	report, err := Search(root, "orphan", fakeEmbedder, 5, false)
+	report, err := Search(root, "orphan", fakeEmbedder, 5, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestSearchKeywordResultsWithoutIndex(t *testing.T) {
 func TestSearchWithoutIndexReportsNotIndexed(t *testing.T) {
 	root := makeVault(t)
 
-	report, err := Search(root, "anything", fakeEmbedder, 5, false)
+	report, err := Search(root, "anything", fakeEmbedder, 5, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1008,7 +1008,7 @@ func TestSearchFallsBackToKeywordsWhenTheEmbedderFails(t *testing.T) {
 	}
 	down := func(texts []string) ([][]float64, error) { return nil, errors.New("embed worker down") }
 
-	report, err := Search(root, "orphan", down, 5, false)
+	report, err := Search(root, "orphan", down, 5, SearchOptions{})
 	if err != nil {
 		t.Fatalf("a failing embedder must not fail the search: %v", err)
 	}
@@ -1032,7 +1032,7 @@ func TestSearchFallsBackToKeywordsWhenTheEmbeddingModelChanged(t *testing.T) {
 		}
 		return out, nil
 	}
-	report, err := Search(root, "orphan", threeDim, 5, false)
+	report, err := Search(root, "orphan", threeDim, 5, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1046,7 +1046,7 @@ func TestSearchHasNoWarningWhenAllIsWell(t *testing.T) {
 	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
 		t.Fatal(err)
 	}
-	report, err := Search(root, "orphan", fakeEmbedder, 5, false)
+	report, err := Search(root, "orphan", fakeEmbedder, 5, SearchOptions{})
 	if err != nil || report.Warning != "" {
 		t.Errorf("err %v, warning %q", err, report.Warning)
 	}
@@ -1055,7 +1055,7 @@ func TestSearchHasNoWarningWhenAllIsWell(t *testing.T) {
 func TestSearchRejectsAnEmptyQuery(t *testing.T) {
 	root := makeVault(t)
 	for _, q := range []string{"", "   "} {
-		if _, err := Search(root, q, fakeEmbedder, 5, false); err == nil {
+		if _, err := Search(root, q, fakeEmbedder, 5, SearchOptions{}); err == nil {
 			t.Errorf("query %q: want an error, not every line of the vault", q)
 		}
 	}
@@ -1073,7 +1073,7 @@ func TestExactPhraseMatchesOnlyCoverNotes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "projects", "demo", "_index.md"), []byte("needle in a generated index\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	report, err := Search(root, "needle", fakeEmbedder, 5, false)
+	report, err := Search(root, "needle", fakeEmbedder, 5, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1085,7 +1085,7 @@ func TestExactPhraseMatchesOnlyCoverNotes(t *testing.T) {
 func TestSearchWarnsWhenRipgrepIsMissing(t *testing.T) {
 	root := makeVault(t)
 	t.Setenv("PATH", t.TempDir())
-	report, err := Search(root, "orphan", fakeEmbedder, 5, false)
+	report, err := Search(root, "orphan", fakeEmbedder, 5, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1106,7 +1106,7 @@ func TestSearchGivesUpOnAHungRipgrep(t *testing.T) {
 	defer func() { rgTimeout = old }()
 
 	start := time.Now()
-	report, err := Search(root, "orphan", fakeEmbedder, 5, false)
+	report, err := Search(root, "orphan", fakeEmbedder, 5, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1257,7 +1257,7 @@ func TestSearchLeavesRecordsOutUnlessAsked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := Search(root, "zebra", fakeEmbedder, 10, false)
+	report, err := Search(root, "zebra", fakeEmbedder, 10, SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1276,7 +1276,7 @@ func TestSearchLeavesRecordsOutUnlessAsked(t *testing.T) {
 		t.Errorf("want the zebra note first, got %v", results)
 	}
 
-	report, err = Search(root, "zebra", fakeEmbedder, 10, true)
+	report, err = Search(root, "zebra", fakeEmbedder, 10, SearchOptions{WithRecords: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1304,5 +1304,36 @@ func TestMapLeavesRecordsOut(t *testing.T) {
 	}
 	if !strings.Contains(out, "- demo (3)") {
 		t.Errorf("want the demo folder counted without records:\n%s", out)
+	}
+}
+
+func TestSearchLeavesArchiveOutUnlessAsked(t *testing.T) {
+	root := makeVault(t)
+	if err := vault.WriteNote(filepath.Join(root, "archive", "projects", "demo", "old-zebra.md"),
+		map[string]interface{}{"title": "Old zebra pump", "type": "atomic"}, "The zebra pump used to run at 2 bar.\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Reindex(root, fakeEmbedder, false); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Search(root, "zebra", fakeEmbedder, 10, SearchOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, grep := resultPaths(report)
+	for _, m := range report.SemanticMatches {
+		results = append(results, m.Path)
+	}
+	for _, p := range append(results, grep...) {
+		if vault.IsArchived(p) {
+			t.Errorf("archived note in default search: results %v grep %v", results, grep)
+		}
+	}
+	report, err = Search(root, "zebra", fakeEmbedder, 10, SearchOptions{WithArchive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results, _ = resultPaths(report); len(results) == 0 || results[0] != "archive/projects/demo/old-zebra.md" {
+		t.Errorf("with archive: got %v", results)
 	}
 }

@@ -137,8 +137,9 @@ the "go update a bunch of notes" chore that motivated this whole design.
   in `--json`). Hidden folders (`.claude/`, `.wiki/`, ...) are never indexed
   or searched.
   Logs (files under a `logs/` folder) and sources files (`_sources.md`) are
-  indexed but left out of results unless you pass `--logs`; the session map
-  and `wiki prune` leave them out too.
+  indexed but left out of results unless you pass `--logs`; notes under
+  `archive/` likewise need `--archive`. The session map and `wiki prune`
+  leave both out too.
 - **Browse the vault:**
   ```bash
   wiki index          # every Project/Area/Resource with its gist
