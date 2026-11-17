@@ -30,14 +30,37 @@ wiki search "<query>" --top-k 10
 - Browse instead of searching when you want the inventory: `wiki index` lists every folder with its gist; `wiki index <name>` lists one folder's notes (`<kind>/<name>` if the name exists in two buckets).
 - Skip the search for trivial edits and anything fully inside the current repo.
 - On zero hits, say nothing, unless the task was a knowledge question: then say the vault had nothing.
-- Search leaves out logs and sources files (below) and the `archive/`. Add `--logs` for the history (when something was done, where a fact came from), `--archive` for retired notes and closed-out folders.
+- Search leaves out logs, sources files and the archive (below). Add `--logs` for the history (when something was done, where a fact came from), `--archive` for retired notes and closed-out folders.
 
 ## Capturing
 
 1. Pick the bucket: Project (has a deliverable), Area (ongoing, no end state), or Resource (reference, not tied to one of those).
 2. Default to an **atomic note**: one fact, decision, event, or recipe per file. Write a **topic page** only when asked for a long-form writeup or the content is inherently tutorial-shaped.
-3. Search first (above). Link related notes with `[[filename-stem]]`.
+3. Search first (above). Link related notes with `[[filename-stem]]`, never with a relative path: notes move between subfolders and into `archive/`, and a stem link survives that.
 4. Never rewrite an old atomic note to keep it current. Write a new note and set `superseded_by: [[new-note]]` on the old one.
+5. File it by the folder layout below.
+
+### Folder layout
+
+Every Project, Area and Resource folder has the same shape; create a subfolder only when it gets its first file.
+
+```
+<bucket>/<folder>/
+  _overview.md   what is true now: purpose, status, decisions in force, what is open
+  _index.md      generated, never edited
+  notes/         atomic and topic notes
+    decisions/   one decision per file
+    questions/   open questions only
+    <kind>/      a kind with about five notes or more: specs/, plans/, meetings/, guides/, research/ ...
+  drafts/        this folder's unfinished notes: freeform, no frontmatter
+  logs/          maintenance-log.md (what was done, by date) and any other logs
+  raw/           source material, not notes: imports, exports, data, scripts, PDFs
+  _sources.md    optional: where the facts came from
+```
+
+- **Kinds** under `notes/` are lowercase plurals, one level deep. A note goes straight into `notes/` until its kind reaches about five notes; then they move to `notes/<kind>/` together.
+- **A superseded decision**, and **an answered question** (its answer now a decision or note), move to the archive under the same path: `archive/<bucket>/<folder>/notes/...`. So do notes that describe something gone.
+- Nothing else sits at the folder's top level.
 
 ### Notes, logs and sources
 
@@ -47,7 +70,7 @@ Each folder keeps three kinds of file apart:
 - **The log**, `<folder>/logs/maintenance-log.md`, records what was done and when: one `## YYYY-MM-DD` entry per session, a line or two per change, linking the notes it touched. Create it when a folder first needs one.
 - **Sources**, `<folder>/_sources.md`, records where facts came from (raw files, measurements, URLs), when that provenance is worth keeping.
 
-Search and the session map leave logs and sources out; `wiki search --logs` includes them.
+Search and the session map leave logs, sources and the archive out; `wiki search --logs` and `--archive` include them.
 
 Frontmatter on every note:
 

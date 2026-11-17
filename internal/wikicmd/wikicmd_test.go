@@ -1337,3 +1337,34 @@ func TestSearchLeavesArchiveOutUnlessAsked(t *testing.T) {
 		t.Errorf("with archive: got %v", results)
 	}
 }
+
+func TestVaultIndexGroupsNotesBySubfolder(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, title string) {
+		t.Helper()
+		if err := vault.WriteNote(filepath.Join(root, filepath.FromSlash(rel)), map[string]interface{}{"title": title}, "Body.\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("projects/demo/notes/plain.md", "Plain")
+	write("projects/demo/notes/decisions/chose-a.md", "Chose A")
+	write("projects/demo/notes/specs/spec-b.md", "Spec B")
+	write("projects/demo/logs/maintenance-log.md", "Log")
+	if err := WriteVaultIndexes(root); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "projects", "demo", "_index.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	order := []string{"[[plain]]", "## decisions", "[[chose-a]]", "## specs", "[[spec-b]]", "## logs", "[[maintenance-log]]"}
+	last := -1
+	for _, want := range order {
+		i := strings.Index(got, want)
+		if i < 0 || i < last {
+			t.Fatalf("want %q after the previous item:\n%s", want, got)
+		}
+		last = i
+	}
+}

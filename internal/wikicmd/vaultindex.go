@@ -82,8 +82,16 @@ func writeVaultIndex(f folder) error {
 		return err
 	}
 	var body strings.Builder
-	for _, p := range notes {
-		fmt.Fprintf(&body, "- [[%s]]: %s\n", noteStem(p), noteTitle(p))
+	for i, g := range groupBySubfolder(f.Dir, notes) {
+		if g.name != "" {
+			if i > 0 {
+				body.WriteString("\n")
+			}
+			fmt.Fprintf(&body, "## %s\n\n", g.name)
+		}
+		for _, p := range g.paths {
+			fmt.Fprintf(&body, "- [[%s]]: %s\n", noteStem(p), noteTitle(p))
+		}
 	}
 	meta := map[string]interface{}{
 		"title": f.Name + " Index",
@@ -98,6 +106,54 @@ func writeVaultIndex(f folder) error {
 		return nil // unchanged: keep the file's mtime, and no needless editor/sync churn
 	}
 	return os.WriteFile(path, []byte(rendered), 0o644)
+}
+
+type indexGroup struct {
+	name  string // "" for notes/ itself (and notes at the folder's top level), else the kind or folder: "decisions", "logs"
+	paths []string
+}
+
+// groupBySubfolder splits a folder's notes by the subfolder they sit in, for the vault index: the plain notes first,
+// then each kind under notes/ (decisions, questions, specs ...) in name order, then drafts/, logs/ and the rest.
+func groupBySubfolder(dir string, notes []string) []indexGroup {
+	byName := map[string][]string{}
+	for _, p := range notes {
+		rel, err := filepath.Rel(dir, filepath.Dir(p))
+		if err != nil {
+			rel = "."
+		}
+		rel = filepath.ToSlash(rel)
+		name := strings.TrimPrefix(rel, "notes/")
+		if rel == "." || rel == "notes" {
+			name = ""
+		}
+		byName[name] = append(byName[name], p)
+	}
+	rank := func(name string) int {
+		switch {
+		case name == "":
+			return 0
+		case !strings.Contains(name, "/") && name != "drafts" && name != "logs" && name != "raw":
+			return 1 // a kind under notes/ (rel was notes/<kind>)
+		default:
+			return 2
+		}
+	}
+	names := make([]string, 0, len(byName))
+	for n := range byName {
+		names = append(names, n)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if ri, rj := rank(names[i]), rank(names[j]); ri != rj {
+			return ri < rj
+		}
+		return names[i] < names[j]
+	})
+	groups := make([]indexGroup, 0, len(names))
+	for _, n := range names {
+		groups = append(groups, indexGroup{name: n, paths: byName[n]})
+	}
+	return groups
 }
 
 // WriteVaultIndexes regenerates every folder's _index.md.

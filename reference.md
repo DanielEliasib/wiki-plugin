@@ -8,13 +8,13 @@ Less common features of the `wiki` CLI. The everyday procedure is in [SKILL.md](
 projects/<slug>/   # deliverable-driven work, usually maps to a codebase
 areas/<slug>/      # ongoing responsibility, no end state
 resources/<slug>/  # reference material not tied to one project or area
-archive/           # closed-out projects and areas, and notes retired from them (same path below archive/; left out of search unless --archive)
-<folder>/logs/     # the folder's log: what was done, by date (left out of search unless --logs)
-<folder>/_sources.md  # where the folder's facts came from (left out of search unless --logs)
+archive/           # closed-out folders, and notes retired from live ones, under their original path
+                   # (left out of search unless --archive)
+drafts/            # the inbox: drafts not yet tied to a folder (e.g. video-ingest)
 .wiki/index.sqlite # semantic search index: rebuildable, never hand-edit
 ```
 
-Each `projects|areas|resources` folder holds a generated `_index.md` (links only) and an optional hand-written `_overview.md`.
+Inside each folder: `notes/` (with `decisions/`, `questions/` and other kinds below it), `drafts/`, `logs/`, `raw/`, `_sources.md`, `_overview.md` and the generated `_index.md`; see "Folder layout" in [SKILL.md](SKILL.md). Logs and `_sources.md` are left out of search unless `--logs`.
 
 ## Reindexing
 
@@ -35,7 +35,7 @@ Runs in the foreground and incrementally re-embeds notes as they change; it also
 
 ## Drafts
 
-`drafts/` at the vault root is a freeform scratch folder: no frontmatter, any subfolders. It is searchable like any note once indexed. When asked to process drafts: read everything under `drafts/`, file each into a proper atomic or topic note (pick the bucket, write frontmatter), then delete the draft.
+Drafts are freeform: no frontmatter, any subfolders, searchable like any note once indexed. A draft that belongs to a folder lives in `<folder>/drafts/`; the vault-root `drafts/` is the inbox for drafts not tied to a folder yet. When asked to process drafts: read the drafts in scope (one folder's, or the inbox), file each into a proper atomic or topic note in `notes/` (pick the bucket and kind, write frontmatter), then delete the draft.
 
 ## The session map
 
